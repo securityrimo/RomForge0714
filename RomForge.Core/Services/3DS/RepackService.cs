@@ -4,6 +4,7 @@ using _3DS.Core.Models;
 using _3DS.Core.Services;
 using Common;
 using NSW.Utils;
+using Patch.Core.Services;
 using RomForge.Core.Models._3DS;
 using System.IO;
 
@@ -148,6 +149,17 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
             if (File.Exists(plainPath))
                 plainRegion = await File.ReadAllBytesAsync(plainPath, ct);
 
+            var rootIndex = idx == 0 ? patchCtx.RootIndex() : null;
+            var exHeaderPatchFile = FindRootFile(rootIndex, "exheader.bin");
+
+            if (exHeaderPatchFile != null)
+            {
+                exHeader = await exHeaderPatchFile.ReadSmallFileBytesAsync(ct);
+                exefsPatchedCount++;
+
+                log("  exheader 교체: exheader.bin", LogLevel.Ok);
+            }
+
             string exefsDir = Path.Combine(partDir, "exefs");
             var exefsFiles = Directory.Exists(exefsDir) ? ExeFsUnpacker.LoadFromDirectory(exefsDir) : [];
             byte[] exefsBlock = [];
@@ -155,7 +167,6 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
             if (exefsFiles.Count > 0)
             {
                 var exefsIndex = idx == 0 ? patchCtx.FindSubIndex("exefs") : null;
-                var rootIndex = idx == 0 ? patchCtx.RootIndex() : null;
                 var (data, patchedCount) = await ExeFsPacker.PackWithPatchAsync(exefsFiles, exefsIndex, exHeader, rootIndex, log, ct);
 
                 exefsBlock = data;
@@ -258,13 +269,33 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
             var unpack = await NcchUnpacker.UnpackAsync(ncchStream, ncchHeader, ct);
 
             byte[] exefsBlock = [];
+            var rootIndex = idx == 0 ? patchCtx.RootIndex() : null;
+            var exHeaderPatchFile = FindRootFile(rootIndex, "exheader.bin");
+
+            if (exHeaderPatchFile != null)
+            {
+                byte[] newExHeader = await exHeaderPatchFile.ReadSmallFileBytesAsync(ct);
+
+                unpack = new NcchUnpackResult
+                {
+                    Header = unpack.Header,
+                    ExHeader = newExHeader,
+                    Logo = unpack.Logo,
+                    PlainRegion = unpack.PlainRegion,
+                    ExeFs = unpack.ExeFs,
+                    RomFs = unpack.RomFs,
+                };
+
+                exefsPatchedCount++;
+
+                log("  exheader 교체: exheader.bin", LogLevel.Ok);
+            }
 
             if (unpack.ExeFs != null)
             {
                 IReadOnlyList<ExeFsFile> exefsSourceFiles = unpack.ExeFs.Files;
 
                 var exefsIndex = idx == 0 ? patchCtx.FindSubIndex("exefs") : null;
-                var rootIndex = idx == 0 ? patchCtx.RootIndex() : null;
                 var (data, patchedCount) = await ExeFsPacker.PackWithPatchAsync(exefsSourceFiles, exefsIndex, unpack.ExHeader, rootIndex, log, ct);
 
                 exefsBlock = data;
@@ -308,6 +339,11 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
         log($"완료: {outputFilePath}", LogLevel.Ok);
 
         return outputFilePath;
+    }
+
+    private static PatchFileRef? FindRootFile(PatchFileIndex? index, string fileName)
+    {
+        return index?.Entries.FirstOrDefault(e => e.RelativeDir.Length == 0 && e.Kind == PatchFileKind.Overwrite && string.Equals(e.BaseName, fileName, StringComparison.OrdinalIgnoreCase))?.File;
     }
 
     private async Task<INcsdSource> OpenSourceAsync(string inputPath, KeyStore keyStore, CancellationToken ct)
