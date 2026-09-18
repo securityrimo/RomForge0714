@@ -77,6 +77,19 @@ public static class SourceArchiveExtractor
                 };
             }
 
+            var ccdEntries = entries.Where(e => string.Equals(Path.GetExtension(e.Key), ".ccd", StringComparison.OrdinalIgnoreCase)).ToList();
+
+            if (ccdEntries.Count == 1)
+                return ResolveCcd(session, ccdEntries[0], entries, extractDir, progress, ct);
+
+            if (ccdEntries.Count > 1)
+            {
+                return new ArchiveExtractResult
+                {
+                    Candidates = [.. ccdEntries.Select(e => new ArchiveCandidate(e.Key, e.Size))]
+                };
+            }
+
             var candidates = entries.Where(e => RomLikeExtensions.Contains(Path.GetExtension(e.Key))).ToList();
 
             if (candidates.Count == 0)
@@ -127,6 +140,13 @@ public static class SourceArchiveExtractor
                 var gdiResult = ResolveGdi(session, entry, entries, extractDir, progress, ct);
 
                 return gdiResult.ResolvedPath!;
+            }
+
+            if (string.Equals(Path.GetExtension(entry.Key), ".ccd", StringComparison.OrdinalIgnoreCase))
+            {
+                var ccdResult = ResolveCcd(session, entry, entries, extractDir, progress, ct);
+
+                return ccdResult.ResolvedPath!;
             }
 
             var extracted = ExtractEntries(session, [entry], extractDir, progress, ct);
@@ -188,6 +208,25 @@ public static class SourceArchiveExtractor
         string resolvedKey = mainEntry.Key ?? trackEntries[0].Key;
 
         return new ArchiveExtractResult { ResolvedPath = trackExtracted[resolvedKey] };
+    }
+
+    private static ArchiveExtractResult ResolveCcd(IArchiveSession session, ArchiveEntryInfo ccdEntry, List<ArchiveEntryInfo> entries, string extractDir, IProgress<ProgressInfo> progress, CancellationToken ct)
+    {
+        string ccdDir = GetEntryDirectory(ccdEntry.Key);
+        string ccdBaseName = Path.GetFileNameWithoutExtension(ccdEntry.Key);
+
+        var companionEntries = entries
+            .Where(e => GetEntryDirectory(e.Key) == ccdDir && string.Equals(Path.GetFileNameWithoutExtension(e.Key), ccdBaseName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var imgEntry = companionEntries.FirstOrDefault(e => string.Equals(Path.GetExtension(e.Key), ".img", StringComparison.OrdinalIgnoreCase));
+
+        if (imgEntry.Key is null)
+            throw new InvalidOperationException("CCD 파일과 짝을 이루는 IMG 파일을 압축 안에서 찾을 수 없습니다.");
+
+        var extracted = ExtractEntries(session, companionEntries, extractDir, progress, ct);
+
+        return new ArchiveExtractResult { ResolvedPath = extracted[imgEntry.Key] };
     }
 
     private static string GetEntryDirectory(string key)
