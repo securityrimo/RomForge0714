@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿using System.Buffers.Binary;
+using System.Security.Cryptography;
 
 namespace Vita.Core.Cryptography;
 
@@ -49,88 +50,53 @@ public sealed class VitaPfsGameDataCipher
 
     public void DecryptRange(long absoluteOffset, Span<byte> buffer)
     {
+        using var aes = Aes.Create();
+
+        aes.Key = _drvKey;
+
+        Span<byte> tweak = stackalloc byte[16];
+        Span<byte> previousCipherBlock = stackalloc byte[16];
+        Span<byte> keystream = stackalloc byte[16];
         int offset = 0;
 
         while (offset < buffer.Length)
         {
             int chunk = Math.Min(_blockSize, buffer.Length - offset);
-            long tweakKey = absoluteOffset + offset;
-            byte[] tweak = new byte[16];
+            var block = buffer.Slice(offset, chunk);
 
-            WriteUInt64LittleEndian(tweak, (ulong)tweakKey);
+            tweak.Clear();
+            BinaryPrimitives.WriteUInt64LittleEndian(tweak, (ulong)(absoluteOffset + offset));
 
             for (int i = 0; i < 16; i++)
                 tweak[i] ^= _tweakEncKey[i];
 
-            using var aes = Aes.Create();
+            int fullByteCount = chunk / 16 * 16;
+            int tail = chunk - fullByteCount;
 
-            aes.Mode = CipherMode.CBC;
-            aes.Padding = PaddingMode.None;
-            aes.Key = _drvKey;
-            aes.IV = tweak;
-
-            var block = buffer.Slice(offset, chunk).ToArray();
-
-            if (chunk == _blockSize)
+            if (tail > 0)
             {
-                using var decryptor = aes.CreateDecryptor();
-                var plain = new byte[chunk];
-
-                decryptor.TransformBlock(block, 0, chunk, plain, 0);
-                plain.CopyTo(buffer.Slice(offset, chunk));
+                if (fullByteCount > 0)
+                    block.Slice(fullByteCount - 16, 16).CopyTo(previousCipherBlock);
+                else
+                    tweak.CopyTo(previousCipherBlock);
             }
-            else
-                DecryptPartialBlockCbc(_drvKey, tweak, block).CopyTo(buffer.Slice(offset, chunk));
+
+            if (fullByteCount > 0)
+            {
+                var full = block[..fullByteCount];
+
+                aes.DecryptCbc(full, tweak, full, PaddingMode.None);
+            }
+
+            if (tail > 0)
+            {
+                aes.EncryptEcb(previousCipherBlock, keystream, PaddingMode.None);
+
+                for (int i = 0; i < tail; i++)
+                    block[fullByteCount + i] ^= keystream[i];
+            }
 
             offset += _blockSize;
         }
-    }
-
-    private static byte[] DecryptPartialBlockCbc(byte[] key, byte[] iv, byte[] data)
-    {
-        int fullByteCount = (data.Length / 16) * 16;
-        int tail = data.Length - fullByteCount;
-        var result = new byte[data.Length];
-        byte[] ctsPrevBlock = iv;
-
-        if (fullByteCount > 0)
-        {
-            using var aes = Aes.Create();
-
-            aes.Mode = CipherMode.CBC;
-            aes.Padding = PaddingMode.None;
-            aes.Key = key;
-            aes.IV = iv;
-
-            using var decryptor = aes.CreateDecryptor();
-
-            decryptor.TransformBlock(data, 0, fullByteCount, result, 0);
-            ctsPrevBlock = data.AsSpan(fullByteCount - 16, 16).ToArray();
-        }
-
-        if (tail > 0)
-        {
-            using var aes = Aes.Create();
-
-            aes.Mode = CipherMode.ECB;
-            aes.Padding = PaddingMode.None;
-            aes.Key = key;
-
-            using var encryptor = aes.CreateEncryptor();
-            var keystream = new byte[16];
-
-            encryptor.TransformBlock(ctsPrevBlock, 0, 16, keystream, 0);
-
-            for (int i = 0; i < tail; i++)
-                result[fullByteCount + i] = (byte)(data[fullByteCount + i] ^ keystream[i]);
-        }
-
-        return result;
-    }
-
-    private static void WriteUInt64LittleEndian(byte[] dest, ulong value)
-    {
-        for (int i = 0; i < 8; i++)
-            dest[i] = (byte)(value >> (8 * i));
     }
 }

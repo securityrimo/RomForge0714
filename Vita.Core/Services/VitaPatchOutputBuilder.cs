@@ -16,68 +16,33 @@ public static class VitaPatchOutputBuilder
         try
         {
             var groups = VitaPatchShared.BuildGroups(items, defaultPatchPath, patchContexts, log, ct);
-
-            long patchTotal = groups.Sum(g => g.Targets.Sum(t => t.EstimatedSize));
-            var patchReporter = new ProgressReporter("패치 적용 중", string.Empty, patchTotal, progress);
-            var resolved = new Dictionary<(MergeGroup Group, string RelativePath), ResolvedTarget>();
-            int patchCandidates = 0;
+            long totalBytes = groups.Sum(g => g.Targets.Sum(t => t.EstimatedSize) + GetWriteTotal(g, target));
+            var reporter = new ProgressReporter("패치 적용 및 압축 중", string.Empty, totalBytes, progress);
+            var writtenEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int patchCandidates = groups.Sum(g => g.Targets.Count);
             int patchedSuccess = 0;
 
-            foreach (var group in groups)
+            async Task<byte[]?> PatchAsync(MergeGroup group, PatchTarget patchTarget)
             {
-                ct.ThrowIfCancellationRequested();
-
-                foreach (var t in group.Targets)
+                try
                 {
-                    ct.ThrowIfCancellationRequested();
+                    byte[] bytes = await VitaPatchShared.ResolveTargetBytesAsync(patchTarget, group.PatchCtx, log, ct);
 
-                    patchCandidates++;
+                    patchedSuccess++;
 
-                    try
-                    {
-                        byte[] bytes = await VitaPatchShared.ResolveTargetBytesAsync(t, group.PatchCtx, log, ct);
+                    return bytes;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    log($"[{group.Category}] {patchTarget.RelativePath}: 패치 실패, 원본 유지 - {ex.Message}", LogLevel.Error);
 
-                        resolved[(group, t.RelativePath)] = new ResolvedTarget(bytes, t.EstimatedSize);
-                        patchedSuccess++;
-                    }
-                    catch (Exception ex)
-                    {
-                        log($"[{group.Category}] {t.RelativePath}: 패치 실패, 원본 유지 - {ex.Message}", LogLevel.Error);
-                    }
-
-                    patchReporter.AddProgress(t.EstimatedSize);
+                    return null;
+                }
+                finally
+                {
+                    reporter.AddProgress(patchTarget.EstimatedSize);
                 }
             }
-
-            patchReporter.ForceReport();
-
-            long zipTotal = 0;
-
-            foreach (var group in groups)
-            {
-                if (target == VitaOutputTarget.Emu)
-                {
-                    foreach (var appEntry in group.Index.Values)
-                        zipTotal += appEntry.FileEntry.Size;
-                }
-                else
-                {
-                    foreach (var owner in group.Owners)
-                    {
-                        foreach (var (_, size) in VitaPatchShared.GetAllOwnedFiles(owner))
-                            zipTotal += size;
-                    }
-
-                    foreach (var t in group.Targets)
-                    {
-                        if (resolved.ContainsKey((group, t.RelativePath)))
-                            zipTotal += t.EstimatedSize;
-                    }
-                }
-            }
-
-            var zipReporter = new ProgressReporter("압축 중", string.Empty, zipTotal, progress);
-            var writtenEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             Directory.CreateDirectory(Path.GetDirectoryName(outputZipPath)!);
 
@@ -88,18 +53,18 @@ public static class VitaPatchOutputBuilder
                 {
                     ct.ThrowIfCancellationRequested();
 
+                    var targetByPath = group.Targets.ToDictionary(t => t.RelativePath, StringComparer.OrdinalIgnoreCase);
+                    var handledTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                     if (target == VitaOutputTarget.Emu)
                     {
                         foreach (var (relativePath, appEntry) in group.Index)
                         {
                             ct.ThrowIfCancellationRequested();
 
-                            bool isTarget = resolved.TryGetValue((group, relativePath), out var resolvedTarget);
-                            byte[] outputBytes;
+                            byte[]? outputBytes = targetByPath.TryGetValue(relativePath, out var patchTarget) ? await PatchAsync(group, patchTarget) : null;
 
-                            if (isTarget)
-                                outputBytes = resolvedTarget!.Bytes;
-                            else
+                            if (outputBytes is null)
                             {
                                 try
                                 {
@@ -117,7 +82,7 @@ public static class VitaPatchOutputBuilder
 
                             string entryPath = VitaPatchShared.BuildEntryPath(VitaPatchShared.GetBasePrefix(group.Category), group, relativePath);
 
-                            await WriteZipEntryAsync(zip, writtenEntries, entryPath, outputBytes, appEntry.FileEntry.Size, zipReporter, log, group.Category, relativePath, ct);
+                            await WriteZipEntryAsync(zip, writtenEntries, entryPath, outputBytes, appEntry.FileEntry.Size, reporter, ct);
                         }
                     }
                     else
@@ -128,28 +93,22 @@ public static class VitaPatchOutputBuilder
                             {
                                 ct.ThrowIfCancellationRequested();
 
-                                string srcRel = $"{owner.Item.SourcePath}/{relativePath}";
-                                byte[] rawBytes;
-
-                                try
-                                {
-                                    rawBytes = owner.Item.Accessor!.ReadAllBytes(srcRel);
-                                }
-                                catch (Exception ex)
-                                {
-                                    log($"[{owner.Item.Category}] {relativePath}: 원본 읽기 실패 - {ex.Message}", LogLevel.Error);
+                                if (!await WriteOwnedFileAsync(zip, writtenEntries, owner, group, relativePath, size, reporter, log, ct))
                                     continue;
-                                }
 
-                                string baseEntryPath = VitaPatchShared.BuildEntryPath(VitaPatchShared.GetRetailBaseFolder(owner.Item.Category), group, relativePath);
+                                if (!targetByPath.TryGetValue(relativePath, out var patchTarget))
+                                    continue;
 
-                                await WriteZipEntryAsync(zip, writtenEntries, baseEntryPath, rawBytes, size, zipReporter, log, owner.Item.Category, relativePath, ct);
+                                if (!handledTargets.Add(relativePath))
+                                    continue;
 
-                                if (resolved.TryGetValue((group, relativePath), out var resolvedTarget))
+                                byte[]? patchedBytes = await PatchAsync(group, patchTarget);
+
+                                if (patchedBytes != null)
                                 {
                                     string patchedEntryPath = VitaPatchShared.BuildEntryPath(VitaPatchShared.GetPatchedPrefix(group.Category, target), group, relativePath);
 
-                                    await WriteZipEntryAsync(zip, writtenEntries, patchedEntryPath, resolvedTarget.Bytes, resolvedTarget.EstimatedSize, zipReporter, log, group.Category, relativePath, ct);
+                                    await WriteZipEntryAsync(zip, writtenEntries, patchedEntryPath, patchedBytes, patchTarget.EstimatedSize, reporter, ct);
                                 }
                             }
                         }
@@ -162,7 +121,7 @@ public static class VitaPatchOutputBuilder
                     }
                 }
 
-                zipReporter.ForceReport();
+                reporter.ForceReport();
             }
 
             return new VitaMergeResult { TotalFiles = writtenEntries.Count, PatchCandidates = patchCandidates, PatchedSuccessfully = patchedSuccess };
@@ -174,13 +133,43 @@ public static class VitaPatchOutputBuilder
         }
     }
 
-    private static async Task WriteZipEntryAsync(ZipArchive zip, HashSet<string> writtenEntries, string entryPath, byte[] data, long estimatedSize, ProgressReporter reporter, Action<string, LogLevel> log, VitaContentCategory category, string relativePath, CancellationToken ct)
+    private static long GetWriteTotal(MergeGroup group, VitaOutputTarget target)
+    {
+        if (target == VitaOutputTarget.Emu)
+            return group.Index.Values.Sum(e => (long)e.FileEntry.Size);
+
+        long ownedTotal = group.Owners.Sum(owner => VitaPatchShared.GetAllOwnedFiles(owner).Sum(f => f.Size));
+
+        return ownedTotal + group.Targets.Sum(t => t.EstimatedSize);
+    }
+
+    private static async Task<bool> WriteOwnedFileAsync(ZipArchive zip, HashSet<string> writtenEntries, OwnerContext owner, MergeGroup group, string relativePath, long size, ProgressReporter reporter, Action<string, LogLevel> log, CancellationToken ct)
+    {
+        string srcRel = $"{owner.Item.SourcePath}/{relativePath}";
+        byte[] rawBytes;
+
+        try
+        {
+            rawBytes = owner.Item.Accessor!.ReadAllBytes(srcRel);
+        }
+        catch (Exception ex)
+        {
+            log($"[{owner.Item.Category}] {relativePath}: 원본 읽기 실패 - {ex.Message}", LogLevel.Error);
+
+            return false;
+        }
+
+        string baseEntryPath = VitaPatchShared.BuildEntryPath(VitaPatchShared.GetRetailBaseFolder(owner.Item.Category), group, relativePath);
+
+        await WriteZipEntryAsync(zip, writtenEntries, baseEntryPath, rawBytes, size, reporter, ct);
+
+        return true;
+    }
+
+    private static async Task WriteZipEntryAsync(ZipArchive zip, HashSet<string> writtenEntries, string entryPath, byte[] data, long estimatedSize, ProgressReporter reporter, CancellationToken ct)
     {
         if (!writtenEntries.Add(entryPath))
-        {
-            log($"[{category}] {relativePath}: 이미 같은 경로로 추가된 항목이라 건너뜀 (중복)", LogLevel.Highlight);
             return;
-        }
 
         var zipEntry = zip.CreateEntry(entryPath, CompressionLevel.NoCompression);
 

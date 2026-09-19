@@ -68,12 +68,13 @@ public sealed class ZipSourceAccessor : IVitaSourceAccessor
         if (!_entries.TryGetValue(Normalize(relativePath), out var entry))
             throw new FileNotFoundException(relativePath);
 
+        var data = new byte[entry.Length];
+
         using var s = entry.Open();
-        using var ms = new MemoryStream();
 
-        s.CopyTo(ms);
+        s.ReadExactly(data);
 
-        return ms.ToArray();
+        return data;
     }
 
     public long GetFileSize(string relativePath)

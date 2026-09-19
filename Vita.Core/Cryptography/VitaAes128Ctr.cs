@@ -1,51 +1,93 @@
-﻿using System.Security.Cryptography;
+﻿using System.Buffers;
+using System.Buffers.Binary;
+using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace Vita.Core.Cryptography;
 
 public sealed class VitaAes128Ctr : IDisposable
 {
+    private const int MaxChunkBytes = 64 * 1024;
+
     private readonly Aes _aes;
-    private readonly ICryptoTransform _ecbEncryptor;
-    private readonly byte[] _baseIv;
+    private readonly ulong _ivHigh;
+    private readonly ulong _ivLow;
 
     public VitaAes128Ctr(ReadOnlySpan<byte> key, ReadOnlySpan<byte> iv)
     {
-        if (key.Length != 16) 
+        if (key.Length != 16)
             throw new ArgumentException("key must be 16 bytes", nameof(key));
 
-        if (iv.Length != 16) 
+        if (iv.Length != 16)
             throw new ArgumentException("iv must be 16 bytes", nameof(iv));
 
         _aes = Aes.Create();
-        _aes.Mode = CipherMode.ECB;
-        _aes.Padding = PaddingMode.None;
         _aes.Key = key.ToArray();
-        _ecbEncryptor = _aes.CreateEncryptor();
-        _baseIv = iv.ToArray();
+        _ivHigh = BinaryPrimitives.ReadUInt64BigEndian(iv);
+        _ivLow = BinaryPrimitives.ReadUInt64BigEndian(iv[8..]);
     }
 
     public void XorAt(long blockOffset, Span<byte> buffer)
     {
-        var counter = new byte[16];
+        if (buffer.IsEmpty)
+            return;
 
-        AddCounter(_baseIv, blockOffset, counter);
+        ulong low = _ivLow + (ulong)blockOffset;
+        ulong high = _ivHigh + (low < _ivLow ? 1UL : 0UL);
+        int chunkBytes = Math.Min(MaxChunkBytes, (buffer.Length + 15) & ~15);
+        byte[] scratch = ArrayPool<byte>.Shared.Rent(chunkBytes);
 
-        var keystream = new byte[16];
-        int processed = 0;
-
-        while (processed < buffer.Length)
+        try
         {
-            _ecbEncryptor.TransformBlock(counter, 0, 16, keystream, 0);
+            int processed = 0;
 
-            int chunk = Math.Min(16, buffer.Length - processed);
+            while (processed < buffer.Length)
+            {
+                int length = Math.Min(chunkBytes, buffer.Length - processed);
+                int blocks = (length + 15) / 16;
+                var counters = scratch.AsSpan(0, blocks * 16);
 
-            for (int i = 0; i < chunk; i++)
-                buffer[processed + i] ^= keystream[i];
+                for (int i = 0; i < blocks; i++)
+                {
+                    BinaryPrimitives.WriteUInt64BigEndian(counters[(i * 16)..], high);
+                    BinaryPrimitives.WriteUInt64BigEndian(counters[(i * 16 + 8)..], low);
 
-            processed += chunk;
+                    low++;
 
-            IncrementCounter(counter);
+                    if (low == 0)
+                        high++;
+                }
+
+                _aes.EncryptEcb(counters, counters, PaddingMode.None);
+                Xor(buffer.Slice(processed, length), counters);
+
+                processed += length;
+            }
         }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(scratch);
+        }
+    }
+
+    private static void Xor(Span<byte> data, ReadOnlySpan<byte> keystream)
+    {
+        int done = 0;
+
+        if (Vector.IsHardwareAccelerated)
+        {
+            var dataVectors = MemoryMarshal.Cast<byte, Vector<byte>>(data);
+            var keyVectors = MemoryMarshal.Cast<byte, Vector<byte>>(keystream[..data.Length]);
+
+            for (int i = 0; i < dataVectors.Length; i++)
+                dataVectors[i] ^= keyVectors[i];
+
+            done = dataVectors.Length * Vector<byte>.Count;
+        }
+
+        for (int i = done; i < data.Length; i++)
+            data[i] ^= keystream[i];
     }
 
     public static byte[] EcbEncryptSingleBlock(ReadOnlySpan<byte> key, ReadOnlySpan<byte> block)
@@ -65,35 +107,5 @@ public sealed class VitaAes128Ctr : IDisposable
         return output;
     }
 
-    private static void AddCounter(byte[] baseIv, long blockOffset, byte[] result)
-    {
-        Array.Copy(baseIv, result, 16);
-
-        ulong add = (ulong)blockOffset;
-        int carry = 0;
-
-        for (int i = 15; i >= 0 && (add != 0 || carry != 0); i--)
-        {
-            int sum = result[i] + (int)(add & 0xFF) + carry;
-
-            result[i] = (byte)sum;
-            carry = sum >> 8;
-            add >>= 8;
-        }
-    }
-
-    private static void IncrementCounter(byte[] counter)
-    {
-        for (int i = 15; i >= 0; i--)
-        {
-            if (++counter[i] != 0)
-                break;
-        }
-    }
-
-    public void Dispose()
-    {
-        _ecbEncryptor.Dispose();
-        _aes.Dispose();
-    }
+    public void Dispose() => _aes.Dispose();
 }

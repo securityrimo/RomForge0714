@@ -191,7 +191,10 @@ public sealed class PkgSourceAccessor : IVitaSourceAccessor
         if (rel.Equals(BodyBinRelativePath, StringComparison.OrdinalIgnoreCase))
             return _bodyBinItem?.DataSize ?? 0;
 
-        return ReadAllBytes(relativePath).Length;
+        if (!_items.TryGetValue(rel, out var item))
+            throw new FileNotFoundException(relativePath);
+
+        return item.DataSize;
     }
 
     private static string Normalize(string path) => VitaPatchShared.NormalizeZipPath(path);
