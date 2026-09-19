@@ -49,52 +49,62 @@ internal static class VitaPatchShared
                 appSourceByTitle[titleId] = (accessor, sourcePath);
         }
 
-        foreach (var entry in orderedEntries)
+        try
         {
-            if (entry.Kind == VitaSourceKind.Pkg)
+            foreach (var entry in orderedEntries)
             {
-                if (entry.Probe is null)
-                    throw new InvalidOperationException($"PKG 항목에 Probe 정보가 없습니다: {entry.Path}");
-
-                IVitaSourceAccessor accessor;
-
-                if (entry.Probe.Category == VitaContentCategory.Patch && string.IsNullOrWhiteSpace(entry.License) && appSourceByTitle.TryGetValue(entry.Probe.TitleId, out var appSource))
+                if (entry.Kind == VitaSourceKind.Pkg)
                 {
-                    string appWorkBinRel = $"{appSource.SourcePath}/sce_sys/package/work.bin";
-                    var appLicense = WorkBinReader.Read(appSource.Accessor, appWorkBinRel);
+                    if (entry.Probe is null)
+                        throw new InvalidOperationException($"PKG 항목에 Probe 정보가 없습니다: {entry.Path}");
 
-                    accessor = new PkgSourceAccessor(entry.Path, appLicense.Klicensee);
+                    IVitaSourceAccessor accessor;
 
-                    log($"[patch] {entry.Probe.TitleId}: app의 라이선스를 그대로 공유해서 적용함", LogLevel.Info);
+                    if (entry.Probe.Category == VitaContentCategory.Patch && string.IsNullOrWhiteSpace(entry.License) && appSourceByTitle.TryGetValue(entry.Probe.TitleId, out var appSource))
+                    {
+                        string appWorkBinRel = $"{appSource.SourcePath}/sce_sys/package/work.bin";
+                        var appLicense = WorkBinReader.Read(appSource.Accessor, appWorkBinRel);
+
+                        accessor = new PkgSourceAccessor(entry.Path, appLicense.Klicensee);
+
+                        log($"[patch] {entry.Probe.TitleId}: app의 라이선스를 그대로 공유해서 적용함", LogLevel.Info);
+                    }
+                    else
+                    {
+                        accessor = new PkgSourceAccessor(entry.Path, entry.License);
+                    }
+
+                    ownedAccessors.Add(accessor);
+
+                    AddItem(entry.Probe.Category, entry.Probe.TitleId, entry.Probe.ContentIdSuffix, string.Empty, accessor, entry.PatchPath);
                 }
                 else
                 {
-                    accessor = new PkgSourceAccessor(entry.Path, entry.License);
-                }
+                    var accessor = VitaSourceAccessorFactory.Open(entry.Path);
 
-                ownedAccessors.Add(accessor);
+                    ownedAccessors.Add(accessor);
 
-                AddItem(entry.Probe.Category, entry.Probe.TitleId, entry.Probe.ContentIdSuffix, string.Empty, accessor, entry.PatchPath);
-            }
-            else
-            {
-                var accessor = VitaSourceAccessorFactory.Open(entry.Path);
+                    if (entry.ItemSourcePath != null)
+                    {
+                        var itemCategory = entry.ItemCategory ?? throw new InvalidOperationException($"항목 카테고리가 없습니다: {entry.Path}");
+                        var itemTitleId = entry.ItemTitleId ?? throw new InvalidOperationException($"항목 TitleId가 없습니다: {entry.Path}");
 
-                ownedAccessors.Add(accessor);
-
-                if (entry.ItemSourcePath != null)
-                {
-                    var itemCategory = entry.ItemCategory ?? throw new InvalidOperationException($"항목 카테고리가 없습니다: {entry.Path}");
-                    var itemTitleId = entry.ItemTitleId ?? throw new InvalidOperationException($"항목 TitleId가 없습니다: {entry.Path}");
-
-                    AddItem(itemCategory, itemTitleId, entry.ItemContentIdSuffix, entry.ItemSourcePath, accessor, entry.PatchPath);
-                }
-                else
-                {
-                    foreach (var discovered in VitaSourcePreparer.DiscoverItems(accessor))
-                        AddItem(discovered.Category, discovered.TitleId, discovered.ContentIdSuffix, discovered.SourcePath, accessor, entry.PatchPath);
+                        AddItem(itemCategory, itemTitleId, entry.ItemContentIdSuffix, entry.ItemSourcePath, accessor, entry.PatchPath);
+                    }
+                    else
+                    {
+                        foreach (var discovered in VitaSourcePreparer.DiscoverItems(accessor))
+                            AddItem(discovered.Category, discovered.TitleId, discovered.ContentIdSuffix, discovered.SourcePath, accessor, entry.PatchPath);
+                    }
                 }
             }
+        }
+        catch
+        {
+            foreach (var owned in ownedAccessors)
+                owned.Dispose();
+
+            throw;
         }
 
         return (items, ownedAccessors);
@@ -115,7 +125,7 @@ internal static class VitaPatchShared
             appByTitle.TryGetValue(titleId, out var appItem);
             patchByTitle.TryGetValue(titleId, out var patchItem);
 
-            string? appWorkBinFallback = appItem != null ? $"{appItem.SourcePath}/sce_sys/package/work.bin" : null;
+            (IVitaSourceAccessor Accessor, string Rel)? appWorkBinFallback = appItem?.Accessor != null ? (appItem.Accessor, $"{appItem.SourcePath}/sce_sys/package/work.bin") : null;
             var appOwner = appItem != null ? BuildOwnerContext(appItem, null, log) : null;
             var patchOwner = patchItem != null ? BuildOwnerContext(patchItem, appWorkBinFallback, log) : null;
             var owners = new List<OwnerContext>();
@@ -160,7 +170,17 @@ internal static class VitaPatchShared
     }
 
     public static string BuildEntryPath(string prefix, MergeGroup group, string relativePath) =>
-        group.Category == VitaContentCategory.Addcont ? NormalizeZipPath($"{prefix}/{group.TitleId}/{group.ContentIdSuffix}/{relativePath}") : NormalizeZipPath($"{prefix}/{group.TitleId}/{relativePath}");
+        group.Category == VitaContentCategory.Addcont ? ToSafeEntryPath($"{prefix}/{group.TitleId}/{group.ContentIdSuffix}/{relativePath}") : ToSafeEntryPath($"{prefix}/{group.TitleId}/{relativePath}");
+
+    private static string ToSafeEntryPath(string path)
+    {
+        string normalized = NormalizeZipPath(path);
+
+        if (normalized.Split('/').Contains(".."))
+            throw new InvalidDataException($"허용되지 않는 경로입니다: {path}");
+
+        return normalized;
+    }
 
     private static int GetEntrySortRank(VitaBatchSourceEntry entry)
     {
@@ -213,15 +233,15 @@ internal static class VitaPatchShared
         return map;
     }
 
-    public static string? ResolveWorkBinRel(IVitaSourceAccessor source, VitaSourceItem item, string? fallbackWorkBinRel)
+    public static (IVitaSourceAccessor Accessor, string Rel)? ResolveWorkBin(IVitaSourceAccessor source, VitaSourceItem item, (IVitaSourceAccessor Accessor, string Rel)? fallback)
     {
         string workBinRel = $"{item.SourcePath}/sce_sys/package/work.bin";
 
         if (source.FileExists(workBinRel))
-            return workBinRel;
+            return (source, workBinRel);
 
-        if (fallbackWorkBinRel != null && source.FileExists(fallbackWorkBinRel))
-            return fallbackWorkBinRel;
+        if (fallback is { } fb && fb.Accessor.FileExists(fb.Rel))
+            return fb;
 
         return null;
     }
@@ -238,12 +258,12 @@ internal static class VitaPatchShared
         return normalized.Trim('/');
     }
 
-    public static OwnerContext? BuildOwnerContext(VitaSourceItem item, string? fallbackWorkBinRel, Action<string, LogLevel> log)
+    public static OwnerContext? BuildOwnerContext(VitaSourceItem item, (IVitaSourceAccessor Accessor, string Rel)? fallbackWorkBin, Action<string, LogLevel> log)
     {
         var accessor = item.Accessor ?? throw new InvalidOperationException("소스 accessor가 없습니다.");
-        string? workBinRel = ResolveWorkBinRel(accessor, item, fallbackWorkBinRel);
+        var workBin = ResolveWorkBin(accessor, item, fallbackWorkBin);
 
-        if (workBinRel is null)
+        if (workBin is null)
         {
             log($"{item.Category} {item.TitleId}: work.bin 없음, 건너뜀", LogLevel.Error);
             return null;
@@ -251,10 +271,10 @@ internal static class VitaPatchShared
 
         try
         {
-            var license = WorkBinReader.Read(accessor, workBinRel);
+            var license = WorkBinReader.Read(workBin.Value.Accessor, workBin.Value.Rel);
             var table = VitaNoNpDrmDecryptor.ParseFileTable(accessor, item.SourcePath);
 
-            return new OwnerContext { Item = item, Table = table, License = license, WorkBinRelativePath = workBinRel };
+            return new OwnerContext { Item = item, Table = table, License = license, WorkBinAccessor = workBin.Value.Accessor, WorkBinRelativePath = workBin.Value.Rel };
         }
         catch (Exception ex)
         {
@@ -378,7 +398,7 @@ internal static class VitaPatchShared
         return targets;
     }
 
-    public static async Task<byte[]> ResolveTargetBytesAsync(PatchTarget target, PatchContext patchCtx, Action<string, LogLevel> log, CancellationToken ct)
+    public static async Task<byte[]> ResolveTargetBytesAsync(PatchTarget target, PatchContext patchCtx, CancellationToken ct)
     {
         if (target.Kind == PatchTargetKind.Raw)
             return patchCtx.Accessor.ReadAllBytes(target.PatchFileRel);
@@ -386,10 +406,7 @@ internal static class VitaPatchShared
         var appEntry = target.Source ?? throw new InvalidOperationException("xdelta 대상에 원본 정보가 없습니다.");
         var owner = appEntry.Owner;
         var entry = appEntry.FileEntry;
-        byte[] sourceBytes = VitaNoNpDrmDecryptor.DecryptEntry(owner.Item.Accessor!, owner.Item.SourcePath, owner.License.Klicensee, entry, owner.Table.UnicvEntries[appEntry.EntryIndex], owner.Table.FilesSalt, out string? warning);
-
-        if (warning != null)
-            log($"{target.RelativePath}: {warning}", LogLevel.Highlight);
+        byte[] sourceBytes = VitaNoNpDrmDecryptor.DecryptEntry(owner.Item.Accessor!, owner.Item.SourcePath, owner.License.Klicensee, entry, owner.Table.UnicvEntries[appEntry.EntryIndex], owner.Table.FilesSalt);
 
         byte[] patchBytes = patchCtx.Accessor.ReadAllBytes(target.PatchFileRel);
 
@@ -431,12 +448,12 @@ internal static class VitaPatchShared
         if (!WorkBinReader.TryGetTitleIdFromContentId(owner.License.ContentId, out string licenseTitleId))
             return;
 
-        string licenseEntryPath = NormalizeZipPath($"license/{licenseTitleId}/{owner.License.ContentId}.rif");
+        string licenseEntryPath = ToSafeEntryPath($"license/{licenseTitleId}/{owner.License.ContentId}.rif");
 
         if (!writtenEntries.Add(licenseEntryPath))
             return;
 
-        byte[] workBinBytes = owner.Item.Accessor!.ReadAllBytes(owner.WorkBinRelativePath);
+        byte[] workBinBytes = owner.WorkBinAccessor.ReadAllBytes(owner.WorkBinRelativePath);
         var licenseEntry = zip.CreateEntry(licenseEntryPath, CompressionLevel.NoCompression);
         using var es = licenseEntry.Open();
 

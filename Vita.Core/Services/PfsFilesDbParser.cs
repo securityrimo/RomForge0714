@@ -42,7 +42,7 @@ public static class PfsFilesDbParser
             reader.ReadUInt32();
 
             if (nFiles > MaxFilesInBlock)
-                nFiles = 0;
+                throw new InvalidDataException($"files.db 블록의 파일 수가 올바르지 않습니다: {nFiles}");
 
             var names = new (uint ParentIndex, string Name)[MaxFilesInBlock];
 
@@ -125,9 +125,13 @@ public static class PfsFilesDbParser
         {
             var dirChain = new List<string>();
             uint parentIndex = entry.Type.IsDirectory() ? dirMatrix[entry.Index] : entry.ParentIndex;
+            int depth = 0;
 
             while (parentIndex != 0)
             {
+                if (++depth > flat.Count)
+                    throw new InvalidDataException("디렉토리 구조가 순환합니다.");
+
                 if (!dirMatrix.TryGetValue(parentIndex, out uint nextParent))
                     throw new InvalidDataException($"부모 디렉토리 인덱스 {parentIndex}를 찾을 수 없습니다.");
 

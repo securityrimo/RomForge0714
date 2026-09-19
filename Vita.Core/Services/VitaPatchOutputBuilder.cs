@@ -26,7 +26,7 @@ public static class VitaPatchOutputBuilder
             {
                 try
                 {
-                    byte[] bytes = await VitaPatchShared.ResolveTargetBytesAsync(patchTarget, group.PatchCtx, log, ct);
+                    byte[] bytes = await VitaPatchShared.ResolveTargetBytesAsync(patchTarget, group.PatchCtx, ct);
 
                     patchedSuccess++;
 
@@ -68,10 +68,7 @@ public static class VitaPatchOutputBuilder
                             {
                                 try
                                 {
-                                    outputBytes = VitaNoNpDrmDecryptor.DecryptEntry(appEntry.Owner.Item.Accessor!, appEntry.Owner.Item.SourcePath, appEntry.Owner.License.Klicensee, appEntry.FileEntry, appEntry.Owner.Table.UnicvEntries[appEntry.EntryIndex], appEntry.Owner.Table.FilesSalt, out string? warning);
-
-                                    if (warning != null)
-                                        log($"[{group.Category}] {warning}", LogLevel.Highlight);
+                                    outputBytes = VitaNoNpDrmDecryptor.DecryptEntry(appEntry.Owner.Item.Accessor!, appEntry.Owner.Item.SourcePath, appEntry.Owner.License.Klicensee, appEntry.FileEntry, appEntry.Owner.Table.UnicvEntries[appEntry.EntryIndex], appEntry.Owner.Table.FilesSalt);
                                 }
                                 catch (Exception ex)
                                 {

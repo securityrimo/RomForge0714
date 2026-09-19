@@ -24,10 +24,8 @@ public static class VitaNoNpDrmDecryptor
         return new VitaPfsFileTable { Entries = flat, UnicvEntries = unicv, FilesSalt = filesSalt };
     }
 
-    public static byte[] DecryptEntry(IVitaSourceAccessor accessor, string titleRelPath, byte[] klicensee, PfsFlatEntry entry, PfsUnicvEntry unicvEntry, uint filesSalt, out string? warning)
+    public static byte[] DecryptEntry(IVitaSourceAccessor accessor, string titleRelPath, byte[] klicensee, PfsFlatEntry entry, PfsUnicvEntry unicvEntry, uint filesSalt)
     {
-        warning = null;
-
         string relativePath = entry.RelativePath ?? entry.Name;
         string srcRel = Combine(titleRelPath, relativePath);
         byte[] data = accessor.ReadAllBytes(srcRel);

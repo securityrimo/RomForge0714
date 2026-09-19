@@ -51,7 +51,7 @@ public static class VitaPatchOnlyBuilder
 
                     try
                     {
-                        byte[] outputBytes = await VitaPatchShared.ResolveTargetBytesAsync(t, group.PatchCtx, log, ct);
+                        byte[] outputBytes = await VitaPatchShared.ResolveTargetBytesAsync(t, group.PatchCtx, ct);
                         var zipEntry = zip.CreateEntry(entryPath, CompressionLevel.NoCompression);
 
                         await VitaPatchShared.WriteEntryWithProgressAsync(zipEntry, outputBytes, t.EstimatedSize, reporter, ct);

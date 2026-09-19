@@ -12,7 +12,10 @@ public sealed class ZipSourceAccessor : IVitaSourceAccessor
     {
         _stream = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         _zip = new ZipArchive(_stream, ZipArchiveMode.Read);
-        _entries = _zip.Entries.ToDictionary(e => Normalize(e.FullName), e => e, StringComparer.OrdinalIgnoreCase);
+        _entries = new Dictionary<string, ZipArchiveEntry>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in _zip.Entries)
+            _entries.TryAdd(Normalize(entry.FullName), entry);
     }
 
     private static string Normalize(string path) => VitaPatchShared.NormalizeZipPath(path);

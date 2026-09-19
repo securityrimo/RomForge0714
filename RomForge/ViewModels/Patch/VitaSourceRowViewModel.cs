@@ -234,7 +234,7 @@ public class VitaSourceRowViewModel : ViewModelBase
                                 if (!relativePath.Equals("sce_sys/icon0.png", StringComparison.OrdinalIgnoreCase))
                                     continue;
 
-                                pkgIcon = VitaNoNpDrmDecryptor.DecryptEntry(accessor, string.Empty, klicensee, entry, pkgTable.UnicvEntries[i], pkgTable.FilesSalt, out _);
+                                pkgIcon = VitaNoNpDrmDecryptor.DecryptEntry(accessor, string.Empty, klicensee, entry, pkgTable.UnicvEntries[i], pkgTable.FilesSalt);
                                 break;
                             }
                         }
@@ -274,7 +274,7 @@ public class VitaSourceRowViewModel : ViewModelBase
 
                             try
                             {
-                                icon = VitaNoNpDrmDecryptor.DecryptEntry(containerAccessor, ItemSourcePath!, license.Klicensee, entry, table.UnicvEntries[i], table.FilesSalt, out _);
+                                icon = VitaNoNpDrmDecryptor.DecryptEntry(containerAccessor, ItemSourcePath!, license.Klicensee, entry, table.UnicvEntries[i], table.FilesSalt);
                             }
                             catch { }
 
