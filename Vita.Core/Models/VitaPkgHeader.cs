@@ -2,13 +2,7 @@
 
 public sealed class VitaPkgHeader
 {
-    public required long MetaOffset { get; init; }
-
-    public required int MetaCount { get; init; }
-
     public required int ItemCount { get; init; }
-
-    public required long TotalSize { get; init; }
 
     public required long EncOffset { get; init; }
 

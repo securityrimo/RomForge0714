@@ -2,23 +2,11 @@
 
 namespace Vita.Core.Services;
 
-public sealed class WorkBinReader
+public static class WorkBinReader
 {
-    public const string RelativePath = "sce_sys/package/work.bin";
-
     public static WorkBinLicense Read(string workBinPath) => Parse(File.ReadAllBytes(workBinPath), workBinPath);
 
     public static WorkBinLicense Read(IVitaSourceAccessor accessor, string workBinRelPath) => Parse(accessor.ReadAllBytes(workBinRelPath), workBinRelPath);
-
-    public static WorkBinLicense ReadFromTitlePath(string titleIdPath)
-    {
-        string workBinPath = Path.Combine(titleIdPath, "sce_sys", "package", "work.bin");
-
-        if (!File.Exists(workBinPath))
-            throw new FileNotFoundException($"work.bin이 고정 경로에 없습니다: {workBinPath}", workBinPath);
-
-        return Read(workBinPath);
-    }
 
     private static WorkBinLicense Parse(byte[] data, string label)
     {

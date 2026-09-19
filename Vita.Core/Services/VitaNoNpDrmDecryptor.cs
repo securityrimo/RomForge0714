@@ -5,13 +5,6 @@ namespace Vita.Core.Services;
 
 public static class VitaNoNpDrmDecryptor
 {
-    public static VitaPfsFileTable ParseFileTable(string titleIdPath)
-    {
-        using var accessor = new FolderSourceAccessor(titleIdPath);
-
-        return ParseFileTable(accessor, string.Empty);
-    }
-
     public static VitaPfsFileTable ParseFileTable(IVitaSourceAccessor accessor, string titleRelPath)
     {
         string filesDbRel = Combine(titleRelPath, "sce_pfs/files.db");
@@ -29,13 +22,6 @@ public static class VitaNoNpDrmDecryptor
         var unicv = PfsUnicvDbParser.Parse(unicvDbStream, flat.Count);
 
         return new VitaPfsFileTable { Entries = flat, UnicvEntries = unicv, FilesSalt = filesSalt };
-    }
-
-    public static byte[] DecryptEntry(string titleIdPath, byte[] klicensee, PfsFlatEntry entry, PfsUnicvEntry unicvEntry, uint filesSalt, out string? warning)
-    {
-        using var accessor = new FolderSourceAccessor(titleIdPath);
-
-        return DecryptEntry(accessor, string.Empty, klicensee, entry, unicvEntry, filesSalt, out warning);
     }
 
     public static byte[] DecryptEntry(IVitaSourceAccessor accessor, string titleRelPath, byte[] klicensee, PfsFlatEntry entry, PfsUnicvEntry unicvEntry, uint filesSalt, out string? warning)
@@ -69,48 +55,6 @@ public static class VitaNoNpDrmDecryptor
         }
 
         return data;
-    }
-
-    public static List<string> Decrypt(string titleIdPath, string destPath, byte[] klicensee, IProgress<double>? progress = null, CancellationToken ct = default)
-    {
-        var table = ParseFileTable(titleIdPath);
-        var warnings = new List<string>();
-
-        Directory.CreateDirectory(destPath);
-
-        for (int i = 0; i < table.Entries.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            var entry = table.Entries[i];
-            string relativePath = entry.RelativePath ?? entry.Name;
-            string srcFile = Path.Combine(titleIdPath, relativePath);
-            string dstFile = Path.Combine(destPath, relativePath);
-
-            if (entry.Type.IsDirectory())
-            {
-                Directory.CreateDirectory(dstFile);
-                continue;
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(dstFile)!);
-
-            if (!File.Exists(srcFile))
-            {
-                progress?.Report((double)(i + 1) / table.Entries.Count);
-                continue;
-            }
-
-            byte[] data = DecryptEntry(titleIdPath, klicensee, entry, table.UnicvEntries[i], table.FilesSalt, out string? warning);
-
-            if (warning != null)
-                warnings.Add(warning);
-
-            File.WriteAllBytes(dstFile, data);
-            progress?.Report((double)(i + 1) / table.Entries.Count);
-        }
-
-        return warnings;
     }
 
     private static string Combine(string basePath, string relative) => string.IsNullOrEmpty(basePath) ? relative : $"{basePath.TrimEnd('/')}/{relative.Replace('\\', '/')}";

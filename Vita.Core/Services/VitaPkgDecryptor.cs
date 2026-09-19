@@ -5,7 +5,7 @@ using Vita.Core.Models;
 
 namespace Vita.Core.Services;
 
-public sealed class VitaPkgDecryptor
+public static class VitaPkgDecryptor
 {
     private const uint PkgMagic = 0x7f504b47;
     private const uint ExtMagic = 0x7f657874;
@@ -24,7 +24,6 @@ public sealed class VitaPkgDecryptor
         long metaOffset = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(8));
         int metaCount = (int)BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(12));
         int itemCount = (int)BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(20));
-        long totalSize = (long)BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(24));
         long encOffset = (long)BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(32));
         long encSize = (long)BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(40));
         byte[] iv = header.AsSpan(0x70, 16).ToArray();
@@ -65,10 +64,7 @@ public sealed class VitaPkgDecryptor
 
         return new VitaPkgHeader
         {
-            MetaOffset = metaOffset,
-            MetaCount = metaCount,
             ItemCount = itemCount,
-            TotalSize = totalSize,
             EncOffset = encOffset,
             EncSize = encSize,
             Iv = iv,
@@ -136,53 +132,5 @@ public sealed class VitaPkgDecryptor
         ctr.XorAt(item.DataOffset / 16, data);
 
         return data;
-    }
-
-    public static void ExtractTo(Stream pkgStream, VitaPkgHeader header, string outputDir, IProgress<double>? progress = null, CancellationToken ct = default)
-    {
-        using var ctr = CreateCipher(header);
-        var items = ReadItemTable(pkgStream, header, ctr);
-
-        Directory.CreateDirectory(outputDir);
-
-        for (int i = 0; i < items.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            var item = items[i];
-
-            string outPath = Path.Combine(outputDir, item.Name.Replace('/', Path.DirectorySeparatorChar));
-
-            if (IsDirectory(item))
-            {
-                Directory.CreateDirectory(outPath);
-                continue;
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
-
-            const int chunkSize = 1 * 1024 * 1024;
-            long remaining = item.DataSize;
-            long blockCursor = item.DataOffset;
-            using var outFile = File.Create(outPath);
-
-            while (remaining > 0)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                int toRead = (int)Math.Min(chunkSize, remaining);
-                var buffer = new byte[toRead];
-
-                pkgStream.Seek(header.EncOffset + blockCursor, SeekOrigin.Begin);
-                pkgStream.ReadExactly(buffer);
-                ctr.XorAt(blockCursor / 16, buffer);
-                outFile.Write(buffer);
-
-                blockCursor += toRead;
-                remaining -= toRead;
-            }
-
-            progress?.Report((double)(i + 1) / items.Count);
-        }
     }
 }

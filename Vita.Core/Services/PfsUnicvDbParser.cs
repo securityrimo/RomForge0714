@@ -3,18 +3,11 @@ using Vita.Core.Models;
 
 namespace Vita.Core.Services;
 
-public sealed class PfsUnicvDbParser
+public static class PfsUnicvDbParser
 {
     private const int PageSize = 0x400;
     private const int MaxSignaturesPerTableIftbl = 0x32;
     private const int MaxSignaturesPerTableIcvdb = 0x2D;
-
-    public static List<PfsUnicvEntry> Parse(string unicvDbPath, int entryCount)
-    {
-        using var stream = File.OpenRead(unicvDbPath);
-
-        return Parse(stream, entryCount);
-    }
 
     public static List<PfsUnicvEntry> Parse(Stream stream, int entryCount)
     {

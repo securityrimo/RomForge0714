@@ -3,18 +3,11 @@ using Vita.Core.Models;
 
 namespace Vita.Core.Services;
 
-public sealed class PfsFilesDbParser
+public static class PfsFilesDbParser
 {
     private const int PageSize = 0x400;
     private const int MaxFilesInBlock = 9;
     private const int FileNameSize = 68;
-
-    public static List<PfsFlatEntry> Parse(string filesDbPath, out uint filesSalt)
-    {
-        using var stream = File.OpenRead(filesDbPath);
-
-        return Parse(stream, out filesSalt);
-    }
 
     public static List<PfsFlatEntry> Parse(Stream stream, out uint filesSalt)
     {

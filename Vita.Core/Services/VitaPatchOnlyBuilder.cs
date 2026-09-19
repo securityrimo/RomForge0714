@@ -6,35 +6,6 @@ namespace Vita.Core.Services;
 
 public static class VitaPatchOnlyBuilder
 {
-    public static async Task<VitaPatchOnlyResult> BuildAsync(string sourcePath, string patchPath, string outputZipPath, VitaOutputTarget target, Action<string, LogLevel> log, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
-    {
-        var entry = new VitaBatchSourceEntry { Kind = VitaSourceKind.ZipOrFolder, Path = sourcePath };
-
-        return await BuildFromEntriesAsync([entry], patchPath, outputZipPath, target, log, progress, ct);
-    }
-
-    public static async Task<VitaPatchOnlyResult> BuildFromPkgAsync(string pkgPath, string license, string patchPath, string outputZipPath, VitaOutputTarget target, Action<string, LogLevel> log, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
-    {
-        var probe = VitaPkgProbe.Probe(pkgPath);
-        var entry = new VitaBatchSourceEntry { Kind = VitaSourceKind.Pkg, Path = pkgPath, License = license, Probe = probe };
-
-        return await BuildFromEntriesAsync([entry], patchPath, outputZipPath, target, log, progress, ct);
-    }
-
-    public static async Task<VitaPatchOnlyResult> BuildFromPkgBatchAsync(List<VitaPkgBatchEntry> entries, string patchPath, string outputZipPath, VitaOutputTarget target, Action<string, LogLevel> log, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
-    {
-        var mapped = entries.Select(e => new VitaBatchSourceEntry
-        {
-            Kind = VitaSourceKind.Pkg,
-            Path = e.PkgPath,
-            License = e.License,
-            PatchPath = e.PatchPath,
-            Probe = e.Probe
-        }).ToList();
-
-        return await BuildFromEntriesAsync(mapped, patchPath, outputZipPath, target, log, progress, ct);
-    }
-
     public static async Task<VitaPatchOnlyResult> BuildFromEntriesAsync(List<VitaBatchSourceEntry> entries, string defaultPatchPath, string outputZipPath, VitaOutputTarget target, Action<string, LogLevel> log, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
     {
         var (items, ownedAccessors) = VitaPatchShared.LoadItems(entries, log);
@@ -146,8 +117,6 @@ public static class VitaPatchOnlyBuilder
                         var zipEntry = zip.CreateEntry(entryPath, CompressionLevel.NoCompression);
 
                         await VitaPatchShared.WriteEntryWithProgressAsync(zipEntry, outputBytes, t.EstimatedSize, reporter, ct);
-
-                        long sizeDiff = outputBytes.Length - t.EstimatedSize;
 
                         groupSuccess++;
                     }
