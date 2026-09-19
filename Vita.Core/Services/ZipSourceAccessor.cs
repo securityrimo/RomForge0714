@@ -15,7 +15,7 @@ public sealed class ZipSourceAccessor : IVitaSourceAccessor
         _entries = _zip.Entries.ToDictionary(e => Normalize(e.FullName), e => e, StringComparer.OrdinalIgnoreCase);
     }
 
-    private static string Normalize(string path) => path.Replace('\\', '/').Trim('/');
+    private static string Normalize(string path) => VitaPatchShared.NormalizeZipPath(path);
 
     public bool DirectoryExists(string relativePath)
     {

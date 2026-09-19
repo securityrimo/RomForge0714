@@ -194,7 +194,7 @@ public sealed class PkgSourceAccessor : IVitaSourceAccessor
         return ReadAllBytes(relativePath).Length;
     }
 
-    private static string Normalize(string path) => path.Replace('\\', '/').Trim('/');
+    private static string Normalize(string path) => VitaPatchShared.NormalizeZipPath(path);
 
     public void Dispose()
     {

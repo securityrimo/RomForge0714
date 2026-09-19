@@ -11,12 +11,43 @@ internal static class VitaPatchShared
 
     public static readonly HashSet<string> PatchExtensions = new(StringComparer.OrdinalIgnoreCase) { ".xdelta", ".xdelta3", ".ips", ".ups", ".bps", ".ppf", ".aps" };
 
+    public static async Task<T> RunWithItemsAsync<T>(List<VitaBatchSourceEntry> entries, Action<string, LogLevel> log, Func<List<VitaSourceItem>, Task<T>> run)
+    {
+        var (items, ownedAccessors) = LoadItems(entries, log);
+
+        try
+        {
+            return await run(items);
+        }
+        finally
+        {
+            foreach (var accessor in ownedAccessors)
+                accessor.Dispose();
+        }
+    }
+
     public static (List<VitaSourceItem> Items, List<IVitaSourceAccessor> OwnedAccessors) LoadItems(List<VitaBatchSourceEntry> entries, Action<string, LogLevel> log)
     {
         var ownedAccessors = new List<IVitaSourceAccessor>();
         var items = new List<VitaSourceItem>();
         var appSourceByTitle = new Dictionary<string, (IVitaSourceAccessor Accessor, string SourcePath)>(StringComparer.OrdinalIgnoreCase);
         var orderedEntries = entries.OrderBy(GetEntrySortRank).ToList();
+
+        void AddItem(VitaContentCategory category, string titleId, string? contentIdSuffix, string sourcePath, IVitaSourceAccessor accessor, string? patchPath)
+        {
+            items.Add(new VitaSourceItem
+            {
+                Category = category,
+                TitleId = titleId,
+                ContentIdSuffix = contentIdSuffix,
+                SourcePath = sourcePath,
+                Accessor = accessor,
+                PatchPathOverride = patchPath
+            });
+
+            if (category == VitaContentCategory.App)
+                appSourceByTitle[titleId] = (accessor, sourcePath);
+        }
 
         foreach (var entry in orderedEntries)
         {
@@ -43,18 +74,7 @@ internal static class VitaPatchShared
 
                 ownedAccessors.Add(accessor);
 
-                items.Add(new VitaSourceItem
-                {
-                    Category = entry.Probe.Category,
-                    TitleId = entry.Probe.TitleId,
-                    ContentIdSuffix = entry.Probe.ContentIdSuffix,
-                    SourcePath = string.Empty,
-                    Accessor = accessor,
-                    PatchPathOverride = entry.PatchPath
-                });
-
-                if (entry.Probe.Category == VitaContentCategory.App)
-                    appSourceByTitle[entry.Probe.TitleId] = (accessor, string.Empty);
+                AddItem(entry.Probe.Category, entry.Probe.TitleId, entry.Probe.ContentIdSuffix, string.Empty, accessor, entry.PatchPath);
             }
             else
             {
@@ -64,42 +84,83 @@ internal static class VitaPatchShared
 
                 if (entry.ItemSourcePath != null)
                 {
-                    items.Add(new VitaSourceItem
-                    {
-                        Category = entry.ItemCategory ?? throw new InvalidOperationException($"항목 카테고리가 없습니다: {entry.Path}"),
-                        TitleId = entry.ItemTitleId ?? throw new InvalidOperationException($"항목 TitleId가 없습니다: {entry.Path}"),
-                        ContentIdSuffix = entry.ItemContentIdSuffix,
-                        SourcePath = entry.ItemSourcePath,
-                        Accessor = accessor,
-                        PatchPathOverride = entry.PatchPath
-                    });
+                    var itemCategory = entry.ItemCategory ?? throw new InvalidOperationException($"항목 카테고리가 없습니다: {entry.Path}");
+                    var itemTitleId = entry.ItemTitleId ?? throw new InvalidOperationException($"항목 TitleId가 없습니다: {entry.Path}");
 
-                    if (entry.ItemCategory == VitaContentCategory.App)
-                        appSourceByTitle[entry.ItemTitleId!] = (accessor, entry.ItemSourcePath);
+                    AddItem(itemCategory, itemTitleId, entry.ItemContentIdSuffix, entry.ItemSourcePath, accessor, entry.PatchPath);
                 }
                 else
                 {
                     foreach (var discovered in VitaSourcePreparer.DiscoverItems(accessor))
-                    {
-                        items.Add(new VitaSourceItem
-                        {
-                            Category = discovered.Category,
-                            TitleId = discovered.TitleId,
-                            ContentIdSuffix = discovered.ContentIdSuffix,
-                            SourcePath = discovered.SourcePath,
-                            Accessor = accessor,
-                            PatchPathOverride = entry.PatchPath
-                        });
-
-                        if (discovered.Category == VitaContentCategory.App)
-                            appSourceByTitle[discovered.TitleId] = (accessor, discovered.SourcePath);
-                    }
+                        AddItem(discovered.Category, discovered.TitleId, discovered.ContentIdSuffix, discovered.SourcePath, accessor, entry.PatchPath);
                 }
             }
         }
 
         return (items, ownedAccessors);
     }
+
+    public static List<MergeGroup> BuildGroups(List<VitaSourceItem> items, string defaultPatchPath, Dictionary<string, PatchContext> patchContexts, Action<string, LogLevel> log, CancellationToken ct)
+    {
+        var appByTitle = items.Where(i => i.Category == VitaContentCategory.App).ToDictionary(i => i.TitleId, StringComparer.OrdinalIgnoreCase);
+        var patchByTitle = items.Where(i => i.Category == VitaContentCategory.Patch).ToDictionary(i => i.TitleId, StringComparer.OrdinalIgnoreCase);
+        var addcontItems = items.Where(i => i.Category == VitaContentCategory.Addcont).ToList();
+        var titleIds = appByTitle.Keys.Union(patchByTitle.Keys, StringComparer.OrdinalIgnoreCase).ToList();
+        var groups = new List<MergeGroup>();
+
+        foreach (var titleId in titleIds)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            appByTitle.TryGetValue(titleId, out var appItem);
+            patchByTitle.TryGetValue(titleId, out var patchItem);
+
+            string? appWorkBinFallback = appItem != null ? $"{appItem.SourcePath}/sce_sys/package/work.bin" : null;
+            var appOwner = appItem != null ? BuildOwnerContext(appItem, null, log) : null;
+            var patchOwner = patchItem != null ? BuildOwnerContext(patchItem, appWorkBinFallback, log) : null;
+            var owners = new List<OwnerContext>();
+
+            if (appOwner != null)
+                owners.Add(appOwner);
+
+            if (patchOwner != null)
+                owners.Add(patchOwner);
+
+            if (owners.Count == 0)
+                continue;
+
+            string patchPackagePath = (patchItem?.PatchPathOverride ?? appItem?.PatchPathOverride) ?? defaultPatchPath;
+
+            groups.Add(CreateGroup(VitaContentCategory.App, titleId, null, patchPackagePath, BuildPatchAppIndex(appOwner, patchOwner), owners, patchContexts, log));
+        }
+
+        foreach (var addcontItem in addcontItems)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var owner = BuildOwnerContext(addcontItem, null, log);
+
+            if (owner is null)
+                continue;
+
+            string patchPackagePath = addcontItem.PatchPathOverride ?? defaultPatchPath;
+
+            groups.Add(CreateGroup(VitaContentCategory.Addcont, addcontItem.TitleId, addcontItem.ContentIdSuffix, patchPackagePath, BuildPatchAppIndex(owner, null), [owner], patchContexts, log));
+        }
+
+        return groups;
+    }
+
+    private static MergeGroup CreateGroup(VitaContentCategory category, string titleId, string? contentIdSuffix, string patchPackagePath, Dictionary<string, PatchAppEntry> index, List<OwnerContext> owners, Dictionary<string, PatchContext> patchContexts, Action<string, LogLevel> log)
+    {
+        var patchCtx = GetPatchContext(patchContexts, patchPackagePath, log);
+        var targets = BuildTargets(index, patchCtx);
+
+        return new MergeGroup { Category = category, TitleId = titleId, ContentIdSuffix = contentIdSuffix, PatchCtx = patchCtx, Index = index, Targets = targets, Owners = owners };
+    }
+
+    public static string BuildEntryPath(string prefix, MergeGroup group, string relativePath) =>
+        group.Category == VitaContentCategory.Addcont ? NormalizeZipPath($"{prefix}/{group.TitleId}/{group.ContentIdSuffix}/{relativePath}") : NormalizeZipPath($"{prefix}/{group.TitleId}/{relativePath}");
 
     private static int GetEntrySortRank(VitaBatchSourceEntry entry)
     {

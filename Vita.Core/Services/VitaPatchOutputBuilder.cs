@@ -6,20 +6,8 @@ namespace Vita.Core.Services;
 
 public static class VitaPatchOutputBuilder
 {
-    public static async Task<VitaMergeResult> BuildMergedFromEntriesAsync(List<VitaBatchSourceEntry> entries, string defaultPatchPath, string outputZipPath, VitaOutputTarget target, Action<string, LogLevel> log, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
-    {
-        var (items, ownedAccessors) = VitaPatchShared.LoadItems(entries, log);
-
-        try
-        {
-            return await BuildCoreAsync(items, defaultPatchPath, outputZipPath, target, log, progress, ct);
-        }
-        finally
-        {
-            foreach (var accessor in ownedAccessors)
-                accessor.Dispose();
-        }
-    }
+    public static Task<VitaMergeResult> BuildMergedFromEntriesAsync(List<VitaBatchSourceEntry> entries, string defaultPatchPath, string outputZipPath, VitaOutputTarget target, Action<string, LogLevel> log, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default) =>
+        VitaPatchShared.RunWithItemsAsync(entries, log, items => BuildCoreAsync(items, defaultPatchPath, outputZipPath, target, log, progress, ct));
 
     private static async Task<VitaMergeResult> BuildCoreAsync(List<VitaSourceItem> items, string defaultPatchPath, string outputZipPath, VitaOutputTarget target, Action<string, LogLevel> log, IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
@@ -27,57 +15,7 @@ public static class VitaPatchOutputBuilder
 
         try
         {
-            var appByTitle = items.Where(i => i.Category == VitaContentCategory.App).ToDictionary(i => i.TitleId, StringComparer.OrdinalIgnoreCase);
-            var patchByTitle = items.Where(i => i.Category == VitaContentCategory.Patch).ToDictionary(i => i.TitleId, StringComparer.OrdinalIgnoreCase);
-            var addcontItems = items.Where(i => i.Category == VitaContentCategory.Addcont).ToList();
-            var titleIds = appByTitle.Keys.Union(patchByTitle.Keys, StringComparer.OrdinalIgnoreCase).ToList();
-            var groups = new List<MergeGroup>();
-
-            foreach (var titleId in titleIds)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                appByTitle.TryGetValue(titleId, out var appItem);
-                patchByTitle.TryGetValue(titleId, out var patchItem);
-
-                string? appWorkBinFallback = appItem != null ? $"{appItem.SourcePath}/sce_sys/package/work.bin" : null;
-                var appOwner = appItem != null ? VitaPatchShared.BuildOwnerContext(appItem, null, log) : null;
-                var patchOwner = patchItem != null ? VitaPatchShared.BuildOwnerContext(patchItem, appWorkBinFallback, log) : null;
-                var owners = new List<OwnerContext>();
-
-                if (appOwner != null)
-                    owners.Add(appOwner);
-
-                if (patchOwner != null)
-                    owners.Add(patchOwner);
-
-                if (owners.Count == 0)
-                    continue;
-
-                string patchPackagePath = (patchItem?.PatchPathOverride ?? appItem?.PatchPathOverride) ?? defaultPatchPath;
-                var patchCtx = VitaPatchShared.GetPatchContext(patchContexts, patchPackagePath, log);
-                var index = VitaPatchShared.BuildPatchAppIndex(appOwner, patchOwner);
-                var targets = VitaPatchShared.BuildTargets(index, patchCtx);
-
-                groups.Add(new MergeGroup { Category = VitaContentCategory.App, TitleId = titleId, PatchCtx = patchCtx, Index = index, Targets = targets, Owners = owners });
-            }
-
-            foreach (var addcontItem in addcontItems)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                var owner = VitaPatchShared.BuildOwnerContext(addcontItem, null, log);
-
-                if (owner is null)
-                    continue;
-
-                string patchPackagePath = addcontItem.PatchPathOverride ?? defaultPatchPath;
-                var patchCtx = VitaPatchShared.GetPatchContext(patchContexts, patchPackagePath, log);
-                var index = VitaPatchShared.BuildPatchAppIndex(owner, null);
-                var targets = VitaPatchShared.BuildTargets(index, patchCtx);
-
-                groups.Add(new MergeGroup { Category = VitaContentCategory.Addcont, TitleId = addcontItem.TitleId, ContentIdSuffix = addcontItem.ContentIdSuffix, PatchCtx = patchCtx, Index = index, Targets = targets, Owners = [owner] });
-            }
+            var groups = VitaPatchShared.BuildGroups(items, defaultPatchPath, patchContexts, log, ct);
 
             long patchTotal = groups.Sum(g => g.Targets.Sum(t => t.EstimatedSize));
             var patchReporter = new ProgressReporter("패치 적용 중", string.Empty, patchTotal, progress);
@@ -177,7 +115,7 @@ public static class VitaPatchOutputBuilder
                                 }
                             }
 
-                            string entryPath = BuildEntryPath(VitaPatchShared.GetBasePrefix(group.Category), group, relativePath);
+                            string entryPath = VitaPatchShared.BuildEntryPath(VitaPatchShared.GetBasePrefix(group.Category), group, relativePath);
 
                             await WriteZipEntryAsync(zip, writtenEntries, entryPath, outputBytes, appEntry.FileEntry.Size, zipReporter, log, group.Category, relativePath, ct);
                         }
@@ -203,13 +141,13 @@ public static class VitaPatchOutputBuilder
                                     continue;
                                 }
 
-                                string baseEntryPath = BuildEntryPath(VitaPatchShared.GetRetailBaseFolder(owner.Item.Category), group, relativePath);
+                                string baseEntryPath = VitaPatchShared.BuildEntryPath(VitaPatchShared.GetRetailBaseFolder(owner.Item.Category), group, relativePath);
 
                                 await WriteZipEntryAsync(zip, writtenEntries, baseEntryPath, rawBytes, size, zipReporter, log, owner.Item.Category, relativePath, ct);
 
                                 if (resolved.TryGetValue((group, relativePath), out var resolvedTarget))
                                 {
-                                    string patchedEntryPath = BuildEntryPath(VitaPatchShared.GetPatchedPrefix(group.Category, target), group, relativePath);
+                                    string patchedEntryPath = VitaPatchShared.BuildEntryPath(VitaPatchShared.GetPatchedPrefix(group.Category, target), group, relativePath);
 
                                     await WriteZipEntryAsync(zip, writtenEntries, patchedEntryPath, resolvedTarget.Bytes, resolvedTarget.EstimatedSize, zipReporter, log, group.Category, relativePath, ct);
                                 }
@@ -235,9 +173,6 @@ public static class VitaPatchOutputBuilder
                 patchCtx.Accessor.Dispose();
         }
     }
-
-    private static string BuildEntryPath(string prefix, MergeGroup group, string relativePath) =>
-        group.Category == VitaContentCategory.Addcont ? VitaPatchShared.NormalizeZipPath($"{prefix}/{group.TitleId}/{group.ContentIdSuffix}/{relativePath}") : VitaPatchShared.NormalizeZipPath($"{prefix}/{group.TitleId}/{relativePath}");
 
     private static async Task WriteZipEntryAsync(ZipArchive zip, HashSet<string> writtenEntries, string entryPath, byte[] data, long estimatedSize, ProgressReporter reporter, Action<string, LogLevel> log, VitaContentCategory category, string relativePath, CancellationToken ct)
     {

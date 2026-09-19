@@ -57,5 +57,5 @@ public static class VitaNoNpDrmDecryptor
         return data;
     }
 
-    private static string Combine(string basePath, string relative) => string.IsNullOrEmpty(basePath) ? relative : $"{basePath.TrimEnd('/')}/{relative.Replace('\\', '/')}";
+    private static string Combine(string basePath, string relative) => string.IsNullOrEmpty(basePath) ? relative : $"{basePath.TrimEnd('/')}/{VitaPatchShared.NormalizePath(relative)}";
 }
