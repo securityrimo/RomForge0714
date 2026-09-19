@@ -2,7 +2,6 @@
 using _3DS.Core.FileSystem;
 using _3DS.Core.Services;
 using Common;
-using RomForge.Core;
 using RomForge.Core.Models._3DS;
 using System.IO;
 
@@ -10,10 +9,10 @@ namespace RomForge.Core.Services._3DS;
 
 internal sealed class RepackOutputBuilder(Action<string, LogLevel> log)
 {
-    public Task<string> BuildOutputAsync(RepackedNcsdSource repackedSource, string outputBasePath, KeyStore? keyStore, RepackOutputFormat format, byte[]? exHeaderPart0, byte[]? exefsBlockPart0, Action<long, long>? reporter, Action<string>? onOutputPathKnown, CancellationToken ct) => format switch
+    public Task<string> BuildOutputAsync(RepackedNcsdSource repackedSource, string outputBasePath, KeyStore? keyStore, RepackOutputFormat format, byte[]? exHeaderPart0, byte[]? exefsBlockPart0, Action<long, long>? reporter, IProgress<ProgressInfo>? stageProgress, Action<string>? onOutputPathKnown, CancellationToken ct) => format switch
     {
-        RepackOutputFormat.Cia => BuildCiaAsync(repackedSource, outputBasePath, keyStore, exHeaderPart0, exefsBlockPart0, reporter, onOutputPathKnown, ct),
-        RepackOutputFormat.Zcci => BuildZcciAsync(repackedSource, outputBasePath, reporter, onOutputPathKnown, ct),
+        RepackOutputFormat.Cia => BuildCiaAsync(repackedSource, outputBasePath, keyStore, exHeaderPart0, exefsBlockPart0, reporter, stageProgress, onOutputPathKnown, ct),
+        RepackOutputFormat.Zcci => BuildZcciAsync(repackedSource, outputBasePath, reporter, stageProgress, onOutputPathKnown, ct),
         _ => BuildCciAsync(repackedSource, outputBasePath, reporter, onOutputPathKnown, ct),
     };
 
@@ -23,13 +22,12 @@ internal sealed class RepackOutputBuilder(Action<string, LogLevel> log)
         await using var cciStream = File.Open(outputCci, FileMode.Create, FileAccess.ReadWrite);
 
         onOutputPathKnown?.Invoke(outputCci);
-
         await NcsdBuilder.BuildAsync(repackedSource, cciStream, reporter, ct);
 
         return outputCci;
     }
 
-    private async Task<string> BuildCiaAsync(RepackedNcsdSource repackedSource, string outputBasePath, KeyStore? keyStore, byte[]? exHeaderPart0, byte[]? exefsBlockPart0, Action<long, long>? reporter, Action<string>? onOutputPathKnown, CancellationToken ct)
+    private async Task<string> BuildCiaAsync(RepackedNcsdSource repackedSource, string outputBasePath, KeyStore? keyStore, byte[]? exHeaderPart0, byte[]? exefsBlockPart0, Action<long, long>? reporter, IProgress<ProgressInfo>? stageProgress, Action<string>? onOutputPathKnown, CancellationToken ct)
     {
         if (keyStore == null)
             throw new InvalidOperationException("CIA를 생성하려면 키가 필요합니다.");
@@ -41,12 +39,12 @@ internal sealed class RepackOutputBuilder(Action<string, LogLevel> log)
 
         byte[]? smdhPart0 = ExtractIcon(exefsBlockPart0);
 
-        await CiaBuilder.BuildAsync(repackedSource, keyStore, ciaStream, exHeaderPart0, smdhPart0, reporter, log, ct);
+        await CiaBuilder.BuildAsync(repackedSource, keyStore, ciaStream, exHeaderPart0, smdhPart0, reporter, stageProgress, log, ct);
 
         return outputCia;
     }
 
-    private async Task<string> BuildZcciAsync(RepackedNcsdSource repackedSource, string outputBasePath, Action<long, long>? reporter, Action<string>? onOutputPathKnown, CancellationToken ct)
+    private async Task<string> BuildZcciAsync(RepackedNcsdSource repackedSource, string outputBasePath, Action<long, long>? reporter, IProgress<ProgressInfo>? stageProgress, Action<string>? onOutputPathKnown, CancellationToken ct)
     {
         string tempCci = Utils.GetUniqueFilePath(Path.ChangeExtension(outputBasePath, RepackOutputFormat.Cci.ToFileExtension()));
 
@@ -55,7 +53,17 @@ internal sealed class RepackOutputBuilder(Action<string, LogLevel> log)
             await using (var cciStream = File.Open(tempCci, FileMode.Create, FileAccess.ReadWrite))
                 await NcsdBuilder.BuildAsync(repackedSource, cciStream, reporter, ct);
 
-            var zcciProgress = reporter == null ? null : new Progress<ProgressInfo>(info => reporter(info.Percent, 100));
+            IProgress<ProgressInfo>? zcciProgress = null;
+
+            if (stageProgress != null)
+            {
+                var compressReporter = new ProgressReporter("압축 중...", string.Empty, new FileInfo(tempCci).Length, stageProgress);
+
+                compressReporter.ForceReport();
+
+                zcciProgress = new PercentProgress(compressReporter);
+            }
+
             string outputZcci = await Z3dsArchiveService.CompressAsync(tempCci, AppConfig.Instance.Azahar.CompressLevel, zcciProgress, log, ct);
 
             onOutputPathKnown?.Invoke(outputZcci);
@@ -66,6 +74,17 @@ internal sealed class RepackOutputBuilder(Action<string, LogLevel> log)
         {
             if (File.Exists(tempCci))
                 try { File.Delete(tempCci); } catch { }
+        }
+    }
+
+    private sealed class PercentProgress(ProgressReporter reporter) : IProgress<ProgressInfo>
+    {
+        private readonly object _lock = new();
+
+        public void Report(ProgressInfo value)
+        {
+            lock (_lock)
+                reporter.ReportPercent(value.Percent / 100.0);
         }
     }
 
@@ -86,6 +105,7 @@ internal sealed class RepackOutputBuilder(Action<string, LogLevel> log)
                 return null;
 
             byte[] iconData = new byte[iconSize];
+
             Array.Copy(exefsBlock, i, iconData, 0, iconSize);
 
             return iconData;

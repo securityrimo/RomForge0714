@@ -18,7 +18,7 @@ public static class CiaBuilder
     private const int TmdChunkSize = 0x30;
     private const int HashStreamBufferSize = 1024 * 1024;
 
-    public static async Task BuildAsync(INcsdSource ctx, KeyStore keyStore, Stream output, byte[]? exHeaderPart0, byte[]? smdhDataPart0, Action<long, long>? progress = null, Action<string, LogLevel>? log = null, CancellationToken ct = default)
+    public static async Task BuildAsync(INcsdSource ctx, KeyStore keyStore, Stream output, byte[]? exHeaderPart0, byte[]? smdhDataPart0, Action<long, long>? progress = null, IProgress<ProgressInfo>? hashProgress = null, Action<string, LogLevel>? log = null, CancellationToken ct = default)
     {
         if (!output.CanSeek || !output.CanRead)
             throw new NotSupportedException("CIA를 직접 생성하려면 읽기/탐색이 가능한 출력 스트림이 필요합니다(FileStream 등).");
@@ -88,7 +88,6 @@ public static class CiaBuilder
         long firstContentOffset = AlignUp(tmdOffset + tmdSize, CiaAlign);
         var contentOffsets = new long[contentCount];
         long totalBytes = partitions.Sum(p => p.size);
-        long totalBytesToProcess = totalBytes * 2;
         long processedBytes = 0;
 
         output.Position = firstContentOffset;
@@ -104,7 +103,7 @@ public static class CiaBuilder
 
             await ctx.WriteContentAsync(index, output, size, (written, _) =>
             {
-                progress?.Invoke(partitionStartProcessed + written, totalBytesToProcess);
+                progress?.Invoke(partitionStartProcessed + written, totalBytes);
             }, ct);
 
             processedBytes = partitionStartProcessed + size;
@@ -119,23 +118,32 @@ public static class CiaBuilder
             }
         }
 
+        progress?.Invoke(totalBytes, totalBytes);
+
         var contentHashes = new byte[contentCount][];
+        var hashReporter = hashProgress == null ? null : new ProgressReporter("해시 계산 중...", string.Empty, totalBytes, hashProgress);
+        var hashAction = hashReporter?.CreateAction();
+        long hashedBytes = 0;
+
+        hashReporter?.ForceReport();
 
         for (int i = 0; i < contentCount; i++)
         {
             ct.ThrowIfCancellationRequested();
 
             var (_, _, size) = partitions[i];
-            long partitionStartProcessed = processedBytes;
+            long hashedBase = hashedBytes;
 
             output.Position = contentOffsets[i];
             contentHashes[i] = await HashRangeAsync(output, size, read =>
             {
-                progress?.Invoke(partitionStartProcessed + read, totalBytesToProcess);
+                hashAction?.Invoke(hashedBase + read, totalBytes);
             }, ct);
 
-            processedBytes = partitionStartProcessed + size;
+            hashedBytes = hashedBase + size;
         }
+
+        hashAction?.Invoke(totalBytes, totalBytes);
 
         output.Position = tmdOffset;
 
@@ -147,7 +155,6 @@ public static class CiaBuilder
 
         output.SetLength(metaOffset + 0x3AC0);
         await output.WriteAsync(BuildMeta(smdhDataPart0, exHeaderPart0), ct);
-        progress?.Invoke(totalBytesToProcess, totalBytesToProcess);
 
         log?.Invoke("CIA 직접 생성 완료 (중간 CCI 파일 없음)", LogLevel.Ok);
     }

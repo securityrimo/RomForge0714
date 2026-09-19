@@ -84,7 +84,7 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
             reporter(totalBytes, totalBytes);
     }
 
-    public async Task<string> RepackAsync(string unpackedPath, string outputPath, string? displayName, string? gameName, string? publisher = null, KeyStore? keyStore = null, RepackOutputFormat format = RepackOutputFormat.Cci, Action<long, long>? reporter = null, Action<string>? onOutputPathKnown = null, CancellationToken ct = default)
+    public async Task<string> RepackAsync(string unpackedPath, string outputPath, string? displayName, string? gameName, string? publisher = null, KeyStore? keyStore = null, RepackOutputFormat format = RepackOutputFormat.Cci, Action<long, long>? reporter = null, IProgress<ProgressInfo>? stageProgress = null, Action<string>? onOutputPathKnown = null, CancellationToken ct = default)
     {
         log("리팩 시작...", LogLevel.Highlight);
 
@@ -223,7 +223,7 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
         string namePart = string.IsNullOrEmpty(titleId) ? fileName : $"{fileName} [{titleId.ToUpperInvariant()}]";
         string outputBasePath = Path.Combine(outputPath, namePart + "_Repack");
         var repackedSource = await RepackedNcsdSource.CreateAsync(repackedNcchs, contentsList, log, ct);
-        string outputFilePath = await _outputBuilder.BuildOutputAsync(repackedSource, outputBasePath, keyStore, format, exHeaderPart0, exefsBlockPart0, reporter, onOutputPathKnown, ct);
+        string outputFilePath = await _outputBuilder.BuildOutputAsync(repackedSource, outputBasePath, keyStore, format, exHeaderPart0, exefsBlockPart0, reporter, stageProgress, onOutputPathKnown, ct);
 
         if (patchDirSpecified && exefsPatchedCount == 0 && (romfsPatchSource == null || romfsPatchSource.AppliedCount == 0))
             log("패치 대상 파일이 존재하지 않습니다.", LogLevel.Error);
@@ -241,7 +241,7 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
         return outputFilePath;
     }
 
-    public async Task<string> RepackDirectAsync(string inputPath, string outputBasePath, KeyStore keyStore, string? gameName = null, string? publisher = null, RepackOutputFormat format = RepackOutputFormat.Cci, Action<long, long>? reporter = null, Action<string>? onOutputPathKnown = null, CancellationToken ct = default)
+    public async Task<string> RepackDirectAsync(string inputPath, string outputBasePath, KeyStore keyStore, string? gameName = null, string? publisher = null, RepackOutputFormat format = RepackOutputFormat.Cci, Action<long, long>? reporter = null, IProgress<ProgressInfo>? stageProgress = null, Action<string>? onOutputPathKnown = null, CancellationToken ct = default)
     {
         log("스트리밍 기반 리팩 시작...", LogLevel.Highlight);
 
@@ -267,7 +267,6 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
             ncchStream.Position = 0;
 
             var unpack = await NcchUnpacker.UnpackAsync(ncchStream, ncchHeader, ct);
-
             byte[] exefsBlock = [];
             var rootIndex = idx == 0 ? patchCtx.RootIndex() : null;
             var exHeaderPatchFile = FindRootFile(rootIndex, "exheader.bin");
@@ -323,7 +322,7 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
         }
 
         var repackedSource = await RepackedNcsdSource.CreateAsync(repackedNcchs, source.Contents, log, ct);
-        string outputFilePath = await _outputBuilder.BuildOutputAsync(repackedSource, outputBasePath, keyStore, format, exHeaderPart0, exefsBlockPart0, reporter, onOutputPathKnown, ct);
+        string outputFilePath = await _outputBuilder.BuildOutputAsync(repackedSource, outputBasePath, keyStore, format, exHeaderPart0, exefsBlockPart0, reporter, stageProgress, onOutputPathKnown, ct);
 
         if (patchDirSpecified && exefsPatchedCount == 0 && (romfsPatchSource == null || romfsPatchSource.AppliedCount == 0))
             log("패치 대상 파일이 존재하지 않습니다.", LogLevel.Error);
@@ -341,10 +340,7 @@ public class RepackService(Action<string, LogLevel> log, Func<string?> getPatchP
         return outputFilePath;
     }
 
-    private static PatchFileRef? FindRootFile(PatchFileIndex? index, string fileName)
-    {
-        return index?.Entries.FirstOrDefault(e => e.RelativeDir.Length == 0 && e.Kind == PatchFileKind.Overwrite && string.Equals(e.BaseName, fileName, StringComparison.OrdinalIgnoreCase))?.File;
-    }
+    private static PatchFileRef? FindRootFile(PatchFileIndex? index, string fileName) => index?.Entries.FirstOrDefault(e => e.RelativeDir.Length == 0 && e.Kind == PatchFileKind.Overwrite && string.Equals(e.BaseName, fileName, StringComparison.OrdinalIgnoreCase))?.File;
 
     private async Task<INcsdSource> OpenSourceAsync(string inputPath, KeyStore keyStore, CancellationToken ct)
     {

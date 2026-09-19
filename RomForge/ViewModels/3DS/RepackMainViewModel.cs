@@ -1,5 +1,4 @@
 ﻿using _3DS.Core.Crypto;
-using _3DS.Core.Services;
 using Common;
 using Common.WPF.ViewModels;
 using NSW.Core.Enums;
@@ -264,8 +263,7 @@ public class RepackMainViewModel : ToolTabViewModel
                     await Task.Run(() => _service.UnpackAsync(InputPath, unpackedPath, keyStore, reporter.CreateAction(), ct), ct);
                     break;
                 case BuildMode.RebuildOnly:
-                    producedPath = await Task.Run(() => _service.RepackAsync(unpackedPath, OutputPath, _romInfo?.ShortDescription, RomInfo?.ShortDescriptionChanged == true ? RomInfo.ShortDescription : null, RomInfo?.PublisherChanged == true ? RomInfo.Publisher : null, keyStore, OutputFormat, reporter.CreateAction(), TrackOutput, ct), ct);
-                    break;
+                    producedPath = await Task.Run(() => _service.RepackAsync(unpackedPath, OutputPath, _romInfo?.ShortDescription, RomInfo?.ShortDescriptionChanged == true ? RomInfo.ShortDescription : null, RomInfo?.PublisherChanged == true ? RomInfo.Publisher : null, keyStore, OutputFormat, reporter.CreateAction(), progress, TrackOutput, ct), ct); break;
                 case BuildMode.FullProcess:
                     string safeName = NspNameBuilder.SafeFileName(_romInfo?.ShortDescription ?? string.Empty);
                     string fileName = string.IsNullOrEmpty(safeName) ? inputFileName : safeName;
@@ -273,8 +271,7 @@ public class RepackMainViewModel : ToolTabViewModel
                     string namePart = string.IsNullOrEmpty(titleId) ? fileName : $"{fileName} [{titleId}]";
                     string outputBasePath = Path.Combine(OutputPath, namePart + "_Repack");
 
-                    producedPath = await Task.Run(() => _service.RepackDirectAsync(InputPath, outputBasePath, keyStore, RomInfo?.ShortDescriptionChanged == true ? RomInfo.ShortDescription : null, RomInfo?.PublisherChanged == true ? RomInfo.Publisher : null, OutputFormat, reporter.CreateAction(), TrackOutput, ct), ct);
-                    break;
+                    producedPath = await Task.Run(() => _service.RepackDirectAsync(InputPath, outputBasePath, keyStore, RomInfo?.ShortDescriptionChanged == true ? RomInfo.ShortDescription : null, RomInfo?.PublisherChanged == true ? RomInfo.Publisher : null, OutputFormat, reporter.CreateAction(), progress, TrackOutput, ct), ct); break;
             }
 
             isCompleted = true;
