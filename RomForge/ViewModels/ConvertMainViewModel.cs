@@ -37,7 +37,7 @@ public class ConvertMainViewModel : ToolTabViewModel
 {
     private CancellationTokenSource _cts = new();
 
-    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".nsp", ".xci", ".nsz", ".xcz",
         ".cci", ".cia", ".3ds", ".zcci",

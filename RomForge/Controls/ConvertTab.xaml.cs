@@ -66,7 +66,7 @@ public partial class ConvertTab : UserControl
         var dlg = new OpenFileDialog
         {
             Multiselect = true,
-            Filter = "지원 파일|*.nsp;*.xci;*.cci;*.3ds;*.cia;*.wud;*.wux;*.wua;*.mds;*.ccd;*.pbp|모든 파일|*.*"
+            Filter = "지원 파일|" + string.Join(";", ConvertMainViewModel.SupportedExtensions.Select(x => "*" + x)) + "|모든 파일|*.*"
         };
 
         if (dlg.ShowDialog() == true)

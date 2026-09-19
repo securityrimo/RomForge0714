@@ -171,7 +171,7 @@ public sealed class ChdmanService : IDisposable
         try
         {
             Directory.SetCurrentDirectory(workingDir);
-            int result = invoke(input, output, progressCallback, _logCallback);
+            int result = invoke(ToLongPath(Path.Combine(workingDir, input)), ToLongPath(output), progressCallback, _logCallback);
 
             cancelReg.Dispose();
 
@@ -186,6 +186,20 @@ public sealed class ChdmanService : IDisposable
             Directory.SetCurrentDirectory(originalDir);
         }
     }
+
+    private static string ToLongPath(string path)
+    {
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal))
+            return path;
+
+        string full = Path.GetFullPath(path);
+
+        if (full.StartsWith(@"\\", StringComparison.Ordinal))
+            return @"\\?\UNC\" + full[2..];
+
+        return @"\\?\" + full;
+    }
+
     public static ChdmanInfo GetChdInfo(string chdPath)
     {
         chdPath = Path.GetFullPath(chdPath);
@@ -221,7 +235,7 @@ public sealed class ChdmanService : IDisposable
 
         LogCallback logDelegate = msg => sb.AppendLine(msg);
 
-        int result = chdman_get_info(chdPath, logDelegate);
+        int result = chdman_get_info(ToLongPath(chdPath), logDelegate);
 
         GC.KeepAlive(logDelegate);
 
