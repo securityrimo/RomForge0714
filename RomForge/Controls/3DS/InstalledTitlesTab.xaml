@@ -27,18 +27,26 @@
                     </Grid>
                 </Border>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Height="30">
                     <ToggleButton x:Name="FilterAll"    Content="전체"    IsChecked="True" Tag="All"    Style="{StaticResource FilterToggle}" Click="Filter_Click" IsEnabled="{Binding IsUnlocked}"/>
                     <ToggleButton x:Name="FilterGame"   Content="본편"    Foreground="#4F8EF7" Tag="Game"   Style="{StaticResource FilterToggle}" Click="Filter_Click" IsEnabled="{Binding IsUnlocked}"/>
                     <ToggleButton x:Name="FilterUpdate" Content="업데이트" Foreground="#3DD68C" Tag="Update" Style="{StaticResource FilterToggle}" Click="Filter_Click" IsEnabled="{Binding IsUnlocked}"/>
                     <ToggleButton x:Name="FilterDlc"    Content="DLC"     Foreground="#C97BF7" Tag="Dlc"    Style="{StaticResource FilterToggle}" Click="Filter_Click" Margin="0" IsEnabled="{Binding IsUnlocked}"/>
 
-                    <Button x:Name="LoadButton" Style="{StaticResource PrimaryButton}" Margin="20,0,0,0" IsEnabled="{Binding CanLoad}" Click="LoadTitles_Click">
+                    <Button x:Name="RecoverButton" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Padding="5" IsEnabled="{Binding CanLoad}" Click="RecoverTitleDb_Click" ToolTipService.ShowOnDisabled="True" ToolTip="3DS 실기에서 title.db 오류로 설치한 게임이 HOME 메뉴에 나타나지 않거나 인식되지 않을 때 사용합니다.&#10;&#10;SD 카드에 설치된 타이틀을 기준으로 title.db와 import.db를 새로 만듭니다.&#10;기존 title.db / import.db는 삭제되며, 게임 파일은 변경되지 않습니다.&#10;정상적으로 인식되고 있다면 누를 필요가 없습니다.">
+                        <StackPanel Orientation="Horizontal">
+                            <Image Source="/Assets/Images/Recover.png" Width="24" Height="24" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="title.db 복구" VerticalAlignment="Center" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Button x:Name="LoadButton" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Padding="5" IsEnabled="{Binding CanLoad}" Click="LoadTitles_Click">
                         <StackPanel Orientation="Horizontal">
                             <Image Source="/Assets/Images/Loading.png" Width="24" Height="24" Margin="0,0,8,0" VerticalAlignment="Center"/>
                             <TextBlock Text="게임목록 불러오기" VerticalAlignment="Center" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                         </StackPanel>
                     </Button>
+
                 </StackPanel>
             </Grid>
         </Border>

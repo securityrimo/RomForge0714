@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <VersionPrefix>1.7.0.6</VersionPrefix>
+    <VersionPrefix>1.7.0.7</VersionPrefix>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
@@ -40,6 +40,7 @@
     <None Remove="Assets\Images\NoPatch.png" />
     <None Remove="Assets\Images\OpenFolder.png" />
     <None Remove="Assets\Images\PSP.png" />
+    <None Remove="Assets\Images\Recover.png" />
     <None Remove="Assets\Images\Region.png" />
     <None Remove="Assets\Images\Repack.png" />
     <None Remove="Assets\Images\Right.png" />
@@ -83,6 +84,7 @@
     <Resource Include="Assets\Images\NoPatch.png" />
     <Resource Include="Assets\Images\OpenFolder.png" />
     <Resource Include="Assets\Images\PSP.png" />
+    <Resource Include="Assets\Images\Recover.png" />
     <Resource Include="Assets\Images\Repack.png" />
     <Resource Include="Assets\Images\Right.png" />
     <Resource Include="Assets\Images\Saturn.png" />

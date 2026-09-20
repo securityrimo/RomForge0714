@@ -40,6 +40,18 @@ public partial class InstalledTitlesTab : UserControl
         }
     }
 
+    private async void RecoverTitleDb_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Vm.RecoverTitleDbAsync();
+        }
+        catch (Exception ex)
+        {
+            Vm.AppendLog($"복구 실패: {ex.Message}", Common.LogLevel.Error);
+        }
+    }
+
     private void Search_TextChanged(object sender, TextChangedEventArgs e) =>
         Vm.InstalledTitles.RefreshFilter(SearchBox.Text);
 

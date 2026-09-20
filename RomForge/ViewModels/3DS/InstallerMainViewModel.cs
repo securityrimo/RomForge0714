@@ -226,6 +226,62 @@ public class InstallerMainViewModel : ToolTabViewModel
         OnPropertyChanged(nameof(CanLoad));
     }
 
+    public async Task RecoverTitleDbAsync(CancellationToken ct = default)
+    {
+        if (!MessageBoxHelper.ShowQuestion("기존 title.db와 import.db를 삭제하고,\nSD 카드에 설치된 타이틀로 새로 만듭니다.\n\n계속 진행하시겠습니까?"))
+            return;
+
+        SetLoading(true);
+        StatusMessage = "초기화 중...";
+        ClearLog();
+        AppendLog("title.db 복구를 시작합니다.", LogLevel.Highlight);
+        AppendLog($"SD 경로: {SdPath}, Movable 경로: {MovablePath}", LogLevel.Info);
+
+        using (InstalledTitles.BeginWork())
+        using (Install.BeginWork())
+        {
+            try
+            {
+                EnsureInitialized();
+
+                var rebuilder = new TitleDbRebuilder(_keyStore!, _sdCrypto!, _scanner!);
+
+                rebuilder.OnLog += msg => AppendLog(msg, LogLevel.Info);
+
+                var scanProgress = new Progress<(int current, int total)>(p =>
+                {
+                    Progress = p.total == 0 ? 0 : (double)p.current / p.total * 100;
+                    ProgressText = $"스캔 중... {p.current} / {p.total}";
+                });
+
+                void Report(int current, int total) => ((IProgress<(int, int)>)scanProgress).Report((current, total));
+
+                StatusMessage = "title.db 복구 중...";
+
+                var (rebuilt, skipped) = await rebuilder.RebuildAsync(Report, ct);
+
+                StatusMessage = $"복구 완료: {rebuilt}개 타이틀";
+                AppendLog($"복구 완료: {rebuilt}개 등록", LogLevel.Ok);
+
+                if (skipped > 0)
+                    AppendLog($"{skipped}개는 읽을 수 없어 제외되었습니다. 위 로그를 확인하세요.", LogLevel.Error);
+            }
+            catch (OperationCanceledException)
+            {
+                StatusMessage = "취소되었습니다.";
+                AppendLog("복구가 취소되었습니다.", LogLevel.Error);
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"오류: {ex.Message}";
+                AppendLog($"오류: {ex.Message}", LogLevel.Error);
+            }
+        }
+
+        SetLoading(false);
+        OnPropertyChanged(nameof(CanLoad));
+    }
+
     public async Task ExtractTitleAsync(TitleViewModel selected, string outputPath, bool asCci)
     {
         using (InstalledTitles.BeginWork())
