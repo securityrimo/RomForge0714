@@ -13,6 +13,9 @@ public static class Xdelta3
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr xd3_get_last_error();
 
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int xd3_get_last_error_code();
+
     private enum Xd3StreamStatus
     {
         Ok = 0,
@@ -29,6 +32,9 @@ public static class Xdelta3
 
     [DllImport(DllName, EntryPoint = "xd3_stream_read_output", CallingConvention = CallingConvention.Cdecl)]
     private static extern int xd3_stream_read_output(IntPtr handle, byte[] outBuf, nuint outBufCapacity, out nuint written);
+
+    [DllImport(DllName, EntryPoint = "xd3_stream_finish", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int xd3_stream_finish(IntPtr handle);
 
     [DllImport(DllName, EntryPoint = "xd3_stream_close", CallingConvention = CallingConvention.Cdecl)]
     private static extern void xd3_stream_close(IntPtr handle);
@@ -91,13 +97,17 @@ public static class Xdelta3
             using var patchStream = new FileStream(patchPath, FileMode.Open, FileAccess.Read, FileShare.Read, StreamChunkSize, FileOptions.SequentialScan);
             using var outStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None, StreamChunkSize);
             long patchTotal = patchStream.Length;
+
+            if (patchTotal == 0)
+                throw new InvalidOperationException("패치 파일이 비어 있습니다.");
+
             long patchConsumed = 0;
             long totalWritten = 0;
             long estimatedTotal = Math.Max(sourceSize, 1);
             ProgressReporter? reporter = progress is null ? null : new ProgressReporter("패치중...", string.Empty, estimatedTotal, progress);
             Action<long, long>? report = reporter?.CreateAction();
-            var readBuf = new byte[StreamChunkSize];
-            var outBuf = new byte[StreamChunkSize];
+            var readBuf = GC.AllocateArray<byte>(StreamChunkSize, pinned: true);
+            var outBuf = GC.AllocateArray<byte>(StreamChunkSize, pinned: true);
 
             while (true)
             {
@@ -105,13 +115,16 @@ public static class Xdelta3
 
                 int n = patchStream.Read(readBuf, 0, readBuf.Length);
 
+                if (n <= 0)
+                    throw new InvalidOperationException("패치 파일을 읽는 중 오류가 발생했습니다.");
+
                 patchConsumed += n;
 
                 bool isLastChunk = patchConsumed >= patchTotal;
                 int feedRet = xd3_stream_feed(handle, readBuf, (nuint)n, isLastChunk ? 1 : 0);
 
                 if (feedRet != 0)
-                    ThrowIfFailed(feedRet);
+                    ThrowLastError();
 
                 while (true)
                 {
@@ -120,7 +133,7 @@ public static class Xdelta3
                     int status = xd3_stream_read_output(handle, outBuf, (nuint)outBuf.Length, out nuint written);
 
                     if (status == (int)Xd3StreamStatus.Error)
-                        throw new InvalidOperationException($"패치 적용 중 오류: {GetLastError()}");
+                        ThrowLastError();
 
                     if ((int)written > 0)
                     {
@@ -140,6 +153,8 @@ public static class Xdelta3
                     break;
             }
 
+            FinishStream(handle);
+
             report?.Invoke(estimatedTotal, estimatedTotal);
         }
         finally
@@ -150,6 +165,9 @@ public static class Xdelta3
 
     public static byte[] ApplyPatch(byte[] sourceData, byte[] patchData, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
     {
+        if (patchData.Length == 0)
+            throw new InvalidOperationException("패치 데이터가 비어 있습니다.");
+
         long sourceSize = sourceData.Length;
         IntPtr sourceBuf = IntPtr.Zero;
 
@@ -168,15 +186,15 @@ public static class Xdelta3
 
         try
         {
-            using var outStream = new MemoryStream();
+            using var outStream = new MemoryStream((int)sourceSize);
             long patchTotal = patchData.Length;
             long patchConsumed = 0;
             long totalWritten = 0;
             long estimatedTotal = Math.Max(sourceSize, 1);
             ProgressReporter? reporter = progress is null ? null : new ProgressReporter("패치중...", string.Empty, estimatedTotal, progress);
             Action<long, long>? report = reporter?.CreateAction();
-            var readBuf = new byte[StreamChunkSize];
-            var outBuf = new byte[StreamChunkSize];
+            var readBuf = GC.AllocateArray<byte>(StreamChunkSize, pinned: true);
+            var outBuf = GC.AllocateArray<byte>(StreamChunkSize, pinned: true);
 
             while (patchConsumed < patchTotal)
             {
@@ -191,7 +209,7 @@ public static class Xdelta3
                 int feedRet = xd3_stream_feed(handle, readBuf, (nuint)n, isLastChunk ? 1 : 0);
 
                 if (feedRet != 0)
-                    ThrowIfFailed(feedRet);
+                    ThrowLastError();
 
                 while (true)
                 {
@@ -200,7 +218,7 @@ public static class Xdelta3
                     int status = xd3_stream_read_output(handle, outBuf, (nuint)outBuf.Length, out nuint written);
 
                     if (status == (int)Xd3StreamStatus.Error)
-                        throw new InvalidOperationException($"패치 적용 중 오류: {GetLastError()}");
+                        ThrowLastError();
 
                     if ((int)written > 0)
                     {
@@ -220,6 +238,8 @@ public static class Xdelta3
                     break;
             }
 
+            FinishStream(handle);
+
             report?.Invoke(estimatedTotal, estimatedTotal);
 
             return outStream.ToArray();
@@ -233,7 +253,7 @@ public static class Xdelta3
 
     public static void CreatePatch(string sourcePath, string newPath, string patchPath, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
     {
-        
+
     }
 
     private static void ValidateInputFiles(params string[] paths)
@@ -243,16 +263,24 @@ public static class Xdelta3
                 throw new FileNotFoundException($"파일을 찾을 수 없습니다: {path}");
     }
 
-    private static void ThrowIfFailed(int result)
+    private static void FinishStream(IntPtr handle)
     {
-        if (result == 0)
-            return;
+        if (xd3_stream_finish(handle) != 0)
+            ThrowLastError();
+    }
 
-        int absResult = Math.Abs(result);
+    private static void ThrowLastError()
+    {
+        throw new InvalidOperationException($"패치 적용 중 오류: {DescribeError(xd3_get_last_error_code())}");
+    }
 
-        string errorMessage = absResult switch
+    private static string DescribeError(int code)
+    {
+        int absCode = Math.Abs(code);
+
+        return absCode switch
         {
-            17710 => "내부 라이브러리 오류가 발생했습니다. (XD3_INTERNAL)",
+            17710 => $"내부 라이브러리 오류가 발생했습니다. (XD3_INTERNAL) {GetLastError()}",
             17711 => "잘못된 설정 값입니다. (XD3_INVALID)",
             17712 => "원본 파일이 패치 파일과 일치하지 않습니다. (미스매치 / XD3_INVALID_INPUT)",
             17713 => "보조 압축(Secondary Compression) 효율이 없어 적용할 수 없습니다. (XD3_NOSECOND)",
@@ -266,9 +294,7 @@ public static class Xdelta3
             13 => "파일 접근 권한이 없습니다. (EACCES)",
             28 => "디스크 공간이 부족합니다. (ENOSPC)",
 
-            _ => $"{GetLastError()} (Error Code: {result})"
+            _ => GetLastError()
         };
-
-        throw new InvalidOperationException(errorMessage);
     }
 }

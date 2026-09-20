@@ -25,12 +25,19 @@
 #endif
 
 static char last_error_msg[512] = { 0 };
+static int last_error_code = 0;
 
 DLL_EXPORT const char* xd3_get_last_error(void) {
     return last_error_msg;
 }
 
+DLL_EXPORT int xd3_get_last_error_code(void) {
+    return last_error_code;
+}
+
 static void save_error(xd3_stream* stream, int code) {
+    last_error_code = code;
+
     if (stream && stream->msg)
         snprintf(last_error_msg, sizeof(last_error_msg),
             "%s (code: %d)", stream->msg, code);
@@ -58,15 +65,17 @@ static src_ctx* src_ctx_new_from_buffer(const uint8_t* buf, xoff_t size, xd3_sou
     src_ctx* ctx = (src_ctx*)calloc(1, sizeof(src_ctx));
     if (!ctx) return NULL;
 
+    usize_t blksize = size > 0 ? (usize_t)size : 1;
+
     ctx->buf = buf;
     ctx->size = size;
 
-    source->blksize = (usize_t)size;
+    source->blksize = blksize;
     source->ioh = ctx;
     source->curblk = ctx->buf;
     source->curblkno = 0;
     source->onblk = (usize_t)size;
-    source->max_winsize = (usize_t)size;
+    source->max_winsize = blksize;
 
     xd3_set_source_and_size(stream, source, size);
     return ctx;
@@ -76,12 +85,10 @@ static void src_ctx_free(src_ctx* ctx) {
     free(ctx);
 }
 
-/* ---------------- streaming decode API ---------------- */
-
 typedef enum {
-    XD3S_OK = 0,          /* data was written to out_buf; check *written / *has_more */
-    XD3S_NEED_INPUT = 1,  /* caller must call xd3_stream_feed() again before reading more */
-    XD3S_FINISHED = 2,    /* decode complete, no more output will ever be produced */
+    XD3S_OK = 0,
+    XD3S_NEED_INPUT = 1,
+    XD3S_FINISHED = 2,
     XD3S_ERROR = -1
 } xd3_stream_status;
 
@@ -91,10 +98,10 @@ typedef struct {
     xd3_source source;
     src_ctx* src;
 
-    const uint8_t* pending_ptr;   /* unconsumed decoded bytes still owned by xd3, not yet copied to caller */
+    const uint8_t* pending_ptr;
     usize_t        pending_len;
 
-    int finished;   /* true once xd3_decode_input has returned a terminal (non-XD3_OUTPUT/INPUT) status */
+    int finished;
     int errored;
 } xd3_decode_handle;
 
@@ -104,6 +111,7 @@ DLL_EXPORT xd3_decode_handle* xd3_stream_open_decode_buf(const uint8_t* source_b
     if (!h) return NULL;
 
     last_error_msg[0] = 0;
+    last_error_code = 0;
 
     xd3_init_config(&h->config, 0);
     h->config.winsize = (1 << 26);
@@ -127,10 +135,6 @@ DLL_EXPORT xd3_decode_handle* xd3_stream_open_decode_buf(const uint8_t* source_b
     return h;
 }
 
-/* Feed one chunk of PATCH bytes. Call xd3_stream_read_output() repeatedly after this
- * until it returns XD3S_NEED_INPUT or XD3S_FINISHED before feeding the next chunk.
- * Set is_last_chunk=1 on the final call (even if len==0) so xdelta3 knows no more
- * patch data is coming and can flush its final window. */
 DLL_EXPORT int xd3_stream_feed(xd3_decode_handle* h, const uint8_t* patch_chunk, size_t len, int is_last_chunk)
 {
     if (!h || h->errored) return XD3S_ERROR;
@@ -143,16 +147,6 @@ DLL_EXPORT int xd3_stream_feed(xd3_decode_handle* h, const uint8_t* patch_chunk,
     return 0;
 }
 
-/* Drains decoded output into out_buf (capacity out_buf_capacity bytes).
- * *written receives how many bytes were copied this call (may be 0).
- * Return value:
- *   XD3S_OK          - out_buf now holds *written bytes; call again for more
- *                       (there may or may not be more without a fresh feed())
- *   XD3S_NEED_INPUT   - all currently available output has been drained;
- *                       call xd3_stream_feed() with the next patch chunk
- *   XD3S_FINISHED     - decode is complete; *written may still be >0 on this call
- *   XD3S_ERROR        - see xd3_get_last_error()
- */
 DLL_EXPORT int xd3_stream_read_output(xd3_decode_handle* h, uint8_t* out_buf, size_t out_buf_capacity, size_t* written)
 {
     if (!h || h->errored) return XD3S_ERROR;
@@ -172,12 +166,9 @@ DLL_EXPORT int xd3_stream_read_output(xd3_decode_handle* h, uint8_t* out_buf, si
                 *written += take;
             }
 
-            if (h->pending_len > 0) {
-                /* caller's buffer is full; more pending data remains for next call */
+            if (h->pending_len > 0)
                 return XD3S_OK;
-            }
 
-            /* fully drained this xd3 output chunk */
             xd3_consume_output(&h->stream);
         }
 
@@ -208,7 +199,7 @@ DLL_EXPORT int xd3_stream_read_output(xd3_decode_handle* h, uint8_t* out_buf, si
         case XD3_WINFINISH:
             continue;
 
-        case 0: /* stream complete */
+        case 0:
             h->finished = 1;
             continue;
 
@@ -218,6 +209,27 @@ DLL_EXPORT int xd3_stream_read_output(xd3_decode_handle* h, uint8_t* out_buf, si
             return XD3S_ERROR;
         }
     }
+}
+
+DLL_EXPORT int xd3_stream_finish(xd3_decode_handle* h)
+{
+    if (!h || h->errored) return XD3S_ERROR;
+
+    if (h->pending_len > 0) {
+        last_error_code = 0;
+        snprintf(last_error_msg, sizeof(last_error_msg), "decoded output was not fully drained");
+        h->errored = 1;
+        return XD3S_ERROR;
+    }
+
+    int ret = xd3_close_stream(&h->stream);
+    if (ret != 0) {
+        save_error(&h->stream, ret);
+        h->errored = 1;
+        return XD3S_ERROR;
+    }
+
+    return 0;
 }
 
 DLL_EXPORT void xd3_stream_close(xd3_decode_handle* h)
