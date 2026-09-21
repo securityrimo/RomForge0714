@@ -2,17 +2,17 @@ namespace DolphinTool.Core.Rvz;
 
 public static class RvzToIsoConverter
 {
-    public static void Convert(string inputPath, string outputPath, Action<double>? progress = null,
-        CancellationToken cancellationToken = default)
+    public static void Convert(string inputPath, string outputPath, Action<double>? progress = null, CancellationToken ct = default)
     {
         bool succeeded = false;
 
         try
         {
             using var reader = new RvzDiscReader(inputPath);
-            using var output = File.OpenHandle(outputPath, FileMode.Create, FileAccess.Write, FileShare.None,
-                FileOptions.None, reader.IsoSize);
-            reader.WriteIso(output, progress, cancellationToken);
+            using var output = File.OpenHandle(outputPath, FileMode.Create, FileAccess.Write, FileShare.None, FileOptions.None, reader.IsoSize);
+
+            reader.WriteIso(output, progress, ct);
+
             succeeded = true;
         }
         finally
@@ -24,9 +24,7 @@ public static class RvzToIsoConverter
                     if (File.Exists(outputPath))
                         File.Delete(outputPath);
                 }
-                catch
-                {
-                }
+                catch { }
             }
         }
     }

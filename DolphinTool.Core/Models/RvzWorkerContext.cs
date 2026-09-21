@@ -1,4 +1,6 @@
-namespace DolphinTool.Core.Rvz;
+using DolphinTool.Core.Rvz;
+
+namespace DolphinTool.Core.Models;
 
 internal sealed class RvzWorkerContext(RvzCompressionType compression) : IDisposable
 {

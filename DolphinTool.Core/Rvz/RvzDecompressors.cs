@@ -1,3 +1,5 @@
+using DolphinTool.Core.Models;
+
 namespace DolphinTool.Core.Rvz;
 
 internal abstract class RvzDecompressor : IDisposable

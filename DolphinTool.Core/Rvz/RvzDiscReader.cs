@@ -1,27 +1,7 @@
+using DolphinTool.Core.Models;
 using Microsoft.Win32.SafeHandles;
 
 namespace DolphinTool.Core.Rvz;
-
-internal sealed class ProgressReporter(long total, Action<double>? callback)
-{
-    private long _done;
-    private int _lastPermille = -1;
-
-    public void Add(long bytes)
-    {
-        _done += bytes;
-
-        if (callback == null || total <= 0)
-            return;
-
-        int permille = (int)(Math.Min(_done, total) * 1000 / total);
-        if (permille == _lastPermille)
-            return;
-
-        _lastPermille = permille;
-        callback(permille / 1000.0);
-    }
-}
 
 internal sealed class RvzDiscReader : IDisposable
 {
@@ -49,6 +29,7 @@ internal sealed class RvzDiscReader : IDisposable
         try
         {
             _file = RvzFile.Open(_handle);
+
             using var probe = RvzDecompressor.Create(_file.Compression);
         }
         catch
@@ -60,19 +41,23 @@ internal sealed class RvzDiscReader : IDisposable
 
     public long IsoSize => _file.IsoSize;
 
-    public void WriteIso(SafeFileHandle output, Action<double>? progress, CancellationToken cancellationToken)
+    public void WriteIso(SafeFileHandle output, Action<double>? progress, CancellationToken ct)
     {
         long isoSize = _file.IsoSize;
+
         RandomAccess.SetLength(output, isoSize);
 
         int headerLength = (int)Math.Min(_file.DiscHeader.Length, isoSize);
+
         RandomAccess.Write(output, _file.DiscHeader.AsSpan(0, headerLength), 0);
 
         var reporter = new ProgressReporter(isoSize, progress);
+
         reporter.Add(headerLength);
 
         var items = BuildWorkItems(headerLength);
-        RunPipeline(items, output, reporter, cancellationToken);
+
+        RunPipeline(items, output, reporter, ct);
     }
 
     private List<WorkItem> BuildWorkItems(long headerLength)
@@ -81,8 +66,8 @@ internal sealed class RvzDiscReader : IDisposable
         long chunkSize = _file.ChunkSize;
         long rawItemBytes = chunkSize >= RawItemTargetBytes ? chunkSize : RawItemTargetBytes / chunkSize * chunkSize;
         long unitSectors = Math.Max(WiiLayout.BlocksPerGroup, chunkSize / WiiLayout.BlockTotalSize);
-
         long cursor = headerLength;
+
         foreach (var region in BuildRegions())
         {
             if (region.Start != cursor)
@@ -109,6 +94,7 @@ internal sealed class RvzDiscReader : IDisposable
         for (int i = 0; i < _file.RawEntries.Length; i++)
         {
             var entry = _file.RawEntries[i];
+
             if (entry.DataSize != 0)
                 regions.Add(new Region(entry.DataOffset, entry.DataOffset + entry.DataSize, i, -1, -1));
         }
@@ -116,6 +102,7 @@ internal sealed class RvzDiscReader : IDisposable
         for (int p = 0; p < _file.Partitions.Length; p++)
         {
             var entries = _file.Partitions[p].DataEntries;
+
             for (int d = 0; d < entries.Length; d++)
             {
                 if (entries[d].SectorCount == 0)
@@ -123,11 +110,13 @@ internal sealed class RvzDiscReader : IDisposable
 
                 long start = (long)entries[d].FirstSector * WiiLayout.BlockTotalSize;
                 long end = start + (long)entries[d].SectorCount * WiiLayout.BlockTotalSize;
+
                 regions.Add(new Region(start, end, -1, p, d));
             }
         }
 
         regions.Sort((a, b) => a.Start.CompareTo(b.Start));
+
         return regions;
     }
 
@@ -141,8 +130,9 @@ internal sealed class RvzDiscReader : IDisposable
         while (position < end)
         {
             long next = Math.Min(end, alignedStart + ((position - alignedStart) / itemBytes + 1) * itemBytes);
-            items.Add(new WorkItem(WorkKind.Raw, entryIndex, 0, position, next - position,
-                IsZeroRange(entry, alignedStart, position, next)));
+
+            items.Add(new WorkItem(WorkKind.Raw, entryIndex, 0, position, next - position, IsZeroRange(entry, alignedStart, position, next)));
+
             position = next;
         }
     }
@@ -159,6 +149,7 @@ internal sealed class RvzDiscReader : IDisposable
         for (long i = first; i <= last; i++)
         {
             long index = entry.GroupIndex + i;
+
             if (index >= _file.Groups.Length || _file.Groups[index].DataSize != 0)
                 return false;
         }
@@ -177,13 +168,13 @@ internal sealed class RvzDiscReader : IDisposable
         while (position < entryEnd)
         {
             long next = Math.Min(entryEnd, (position / unitSectors + 1) * unitSectors);
+
             items.Add(new WorkItem(WorkKind.Partition, partitionIndex, dataIndex, position, next - position, false));
             position = next;
         }
     }
 
-    private void RunPipeline(List<WorkItem> items, SafeFileHandle output, ProgressReporter reporter,
-        CancellationToken cancellationToken)
+    private void RunPipeline(List<WorkItem> items, SafeFileHandle output, ProgressReporter reporter, CancellationToken ct)
     {
         int window = Math.Clamp(Environment.ProcessorCount, 2, 8);
         var contexts = new List<RvzWorkerContext>();
@@ -193,6 +184,7 @@ internal sealed class RvzDiscReader : IDisposable
         void Complete((Task<WorkResult> Task, RvzWorkerContext Context) entry)
         {
             var result = entry.Task.GetAwaiter().GetResult();
+
             if (result.Buffer != null)
                 RandomAccess.Write(output, result.Buffer.AsSpan(0, result.Length), result.FileOffset);
 
@@ -204,11 +196,12 @@ internal sealed class RvzDiscReader : IDisposable
         {
             foreach (var item in items)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                ct.ThrowIfCancellationRequested();
 
                 if (idle.Count == 0 && contexts.Count < window)
                 {
                     var created = new RvzWorkerContext(_file.Compression);
+
                     contexts.Add(created);
                     idle.Push(created);
                 }
@@ -218,7 +211,8 @@ internal sealed class RvzDiscReader : IDisposable
 
                 var context = idle.Pop();
                 var work = item;
-                pending.Enqueue((Task.Run(() => Process(context, work, cancellationToken), CancellationToken.None), context));
+
+                pending.Enqueue((Task.Run(() => Process(context, work, ct), CancellationToken.None), context));
             }
 
             while (pending.Count > 0)
@@ -230,11 +224,9 @@ internal sealed class RvzDiscReader : IDisposable
             {
                 try
                 {
-                    entry.Task.Wait();
+                    entry.Task.Wait(ct);
                 }
-                catch
-                {
-                }
+                catch { }
             }
 
             foreach (var context in contexts)
@@ -242,30 +234,29 @@ internal sealed class RvzDiscReader : IDisposable
         }
     }
 
-    private WorkResult Process(RvzWorkerContext context, WorkItem item, CancellationToken cancellationToken)
+    private WorkResult Process(RvzWorkerContext context, WorkItem item, CancellationToken ct)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        ct.ThrowIfCancellationRequested();
 
-        return item.Kind == WorkKind.Raw
-            ? ProcessRaw(context, item)
-            : ProcessPartition(context, item);
+        return item.Kind == WorkKind.Raw ? ProcessRaw(context, item) : ProcessPartition(context, item);
     }
 
     private WorkResult ProcessRaw(RvzWorkerContext context, WorkItem item)
     {
         int size = (int)item.Length;
+
         if (item.IsZero)
             return new WorkResult(null, size, item.Start);
 
         var entry = _file.RawEntries[item.EntryIndex];
+
         context.EnsureOutput(size);
 
         long offset = item.Start;
         long remaining = size;
         int position = 0;
 
-        ReadFromGroups(context, ref offset, ref remaining, context.Output, ref position, _file.ChunkSize,
-            WiiLayout.BlockTotalSize, entry.DataOffset, entry.DataSize, entry.GroupIndex, entry.GroupCount, 0, null);
+        ReadFromGroups(context, ref offset, ref remaining, context.Output, ref position, _file.ChunkSize, WiiLayout.BlockTotalSize, entry.DataOffset, entry.DataSize, entry.GroupIndex, entry.GroupCount, 0, null);
 
         if (remaining != 0)
             throw new InvalidDataException("RVZ 원본 데이터 그룹이 부족합니다.");
@@ -287,6 +278,7 @@ internal sealed class RvzDiscReader : IDisposable
         {
             long groupStart = group * WiiLayout.BlocksPerGroup;
             int validSectors = (int)Math.Min(WiiLayout.BlocksPerGroup, partitionSectors - groupStart);
+
             if (validSectors <= 0)
                 throw new InvalidDataException("RVZ 파티션 섹터 범위가 올바르지 않습니다.");
 
@@ -296,9 +288,7 @@ internal sealed class RvzDiscReader : IDisposable
             long emitFrom = Math.Max(groupStart, itemStart);
             long emitTo = Math.Min(groupStart + WiiLayout.BlocksPerGroup, itemEnd);
 
-            Buffer.BlockCopy(context.Encrypted, (int)((emitFrom - groupStart) * WiiLayout.BlockTotalSize),
-                context.Output, (int)((emitFrom - itemStart) * WiiLayout.BlockTotalSize),
-                (int)((emitTo - emitFrom) * WiiLayout.BlockTotalSize));
+            Buffer.BlockCopy(context.Encrypted, (int)((emitFrom - groupStart) * WiiLayout.BlockTotalSize), context.Output, (int)((emitFrom - itemStart) * WiiLayout.BlockTotalSize), (int)((emitTo - emitFrom) * WiiLayout.BlockTotalSize));
         }
 
         return new WorkResult(context.Output, totalBytes, ((long)partition.FirstSector + itemStart) * WiiLayout.BlockTotalSize);
@@ -311,7 +301,6 @@ internal sealed class RvzDiscReader : IDisposable
         long offset = groupStartSector * WiiLayout.BlockDataSize;
         long remaining = (long)validSectors * WiiLayout.BlockDataSize;
         int position = 0;
-
         long chunkSize = (long)_file.ChunkSize * WiiLayout.BlockDataSize / WiiLayout.BlockTotalSize;
         int exceptionLists = (int)Math.Max(1, chunkSize / WiiLayout.GroupDataSize);
 
@@ -326,9 +315,7 @@ internal sealed class RvzDiscReader : IDisposable
             long dataOffset = ((long)entry.FirstSector - partition.FirstSector) * WiiLayout.BlockDataSize;
             long dataSize = (long)entry.SectorCount * WiiLayout.BlockDataSize;
 
-            ReadFromGroups(context, ref offset, ref remaining, context.Decrypted, ref position, chunkSize,
-                WiiLayout.BlockDataSize, dataOffset, dataSize, entry.GroupIndex, entry.GroupCount, exceptionLists,
-                context.Exceptions);
+            ReadFromGroups(context, ref offset, ref remaining, context.Decrypted, ref position, chunkSize, WiiLayout.BlockDataSize, dataOffset, dataSize, entry.GroupIndex, entry.GroupCount, exceptionLists, context.Exceptions);
         }
 
         if (remaining != 0)
@@ -337,9 +324,7 @@ internal sealed class RvzDiscReader : IDisposable
         Array.Clear(context.Decrypted, position, context.Decrypted.Length - position);
     }
 
-    private void ReadFromGroups(RvzWorkerContext context, ref long offset, ref long size, byte[] destination,
-        ref int destinationPosition, long chunkSize, int sectorSize, long dataOffset, long dataSize, uint groupIndex,
-        uint groupCount, int exceptionLists, List<HashException>? exceptions)
+    private void ReadFromGroups(RvzWorkerContext context, ref long offset, ref long size, byte[] destination, ref int destinationPosition, long chunkSize, int sectorSize, long dataOffset, long dataSize, uint groupIndex, uint groupCount, int exceptionLists, List<HashException>? exceptions)
     {
         if (dataOffset + dataSize <= offset)
             return;
@@ -352,9 +337,11 @@ internal sealed class RvzDiscReader : IDisposable
         dataSize += skipped;
 
         long startGroup = (offset - dataOffset) / chunkSize;
+
         for (long i = startGroup; i < groupCount && size > 0; i++)
         {
             long totalGroupIndex = groupIndex + i;
+
             if (totalGroupIndex >= _file.Groups.Length)
                 throw new InvalidDataException("RVZ 그룹 인덱스가 범위를 벗어났습니다.");
 
@@ -368,12 +355,11 @@ internal sealed class RvzDiscReader : IDisposable
                 throw new InvalidDataException("RVZ 그룹 오프셋이 올바르지 않습니다.");
 
             if (group.DataSize == 0)
-            {
                 Array.Clear(destination, destinationPosition, (int)bytesToRead);
-            }
             else
             {
                 var chunk = GetChunk(context, totalGroupIndex, group, (int)thisChunkSize, exceptionLists, groupOffsetInData);
+
                 Buffer.BlockCopy(chunk.Data, (int)offsetInGroup, destination, destinationPosition, (int)bytesToRead);
 
                 if (exceptions != null && exceptionLists > 0)
@@ -387,6 +373,7 @@ internal sealed class RvzDiscReader : IDisposable
                     foreach (var exception in chunk.ExceptionLists[listIndex])
                     {
                         int adjusted = exception.Offset + additional;
+
                         if (adjusted > ushort.MaxValue)
                             throw new InvalidDataException("RVZ 해시 예외 오프셋이 올바르지 않습니다.");
 
@@ -401,8 +388,7 @@ internal sealed class RvzDiscReader : IDisposable
         }
     }
 
-    private DecodedChunk GetChunk(RvzWorkerContext context, long totalGroupIndex, GroupEntry group, int dataSize,
-        int exceptionLists, long junkOffset)
+    private DecodedChunk GetChunk(RvzWorkerContext context, long totalGroupIndex, GroupEntry group, int dataSize, int exceptionLists, long junkOffset)
     {
         if (context.CachedGroupIndex == totalGroupIndex && context.CachedChunk != null)
             return context.CachedChunk;
@@ -411,20 +397,18 @@ internal sealed class RvzDiscReader : IDisposable
 
         long fileOffset = group.FileOffset;
         int compressedSize = group.DataSize;
+
         if (fileOffset + compressedSize > _file.FileLength)
             throw new InvalidDataException("RVZ 그룹 위치가 파일 범위를 벗어났습니다.");
 
         context.EnsureInput(compressedSize);
         RvzIo.ReadExactly(_handle, context.Input.AsSpan(0, compressedSize), fileOffset);
 
-        context.CachedChunk = context.Decoder.Decode(context.Input.AsSpan(0, compressedSize), group.IsCompressed,
-            exceptionLists, dataSize, group.RvzPackedSize, junkOffset);
+        context.CachedChunk = context.Decoder.Decode(context.Input.AsSpan(0, compressedSize), group.IsCompressed, exceptionLists, dataSize, group.RvzPackedSize, junkOffset);
         context.CachedGroupIndex = totalGroupIndex;
+
         return context.CachedChunk;
     }
 
-    public void Dispose()
-    {
-        _handle.Dispose();
-    }
+    public void Dispose() => _handle.Dispose();
 }

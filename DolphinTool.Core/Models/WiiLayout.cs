@@ -1,4 +1,4 @@
-namespace DolphinTool.Core.Rvz;
+namespace DolphinTool.Core.Models;
 
 internal static class WiiLayout
 {

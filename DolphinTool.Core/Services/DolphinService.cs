@@ -72,8 +72,11 @@ public class DolphinService
             {
                 result = format switch
                 {
-                    "wii" or "gcm" or "wbfs" or "wia" or "gcz" =>
+                    "wii" or "wbfs" or "wia" or "gcz" =>
                         rvz_convert_to_rvz(inputPath, outputPath, "zstd", compressionLevel, 131072, progressCb, logCb),
+
+                    "gcm" =>
+                        ConvertGcToRvz(inputPath, outputPath, compressionLevel, ct),
 
                     "rvz" =>
                         ConvertRvzToIso(inputPath, outputPath, ct),
@@ -110,6 +113,24 @@ public class DolphinService
             
             LogMessage?.Invoke(this, ( $"{workType} 완료: {outputPath}", LogLevel.Ok ));
         }, ct);
+    }
+
+    private int ConvertGcToRvz(string inputPath, string outputPath, int compressionLevel, CancellationToken ct)
+    {
+        try
+        {
+            IsoToRvzConverter.Convert(inputPath, outputPath, compressionLevel, 131072, p => ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(p * 100))), ct);
+            return 0;
+        }
+        catch (OperationCanceledException)
+        {
+            return -1;
+        }
+        catch (Exception ex)
+        {
+            LogMessage?.Invoke(this, (ex.Message, LogLevel.Error));
+            return -3;
+        }
     }
 
     private int ConvertRvzToIso(string inputPath, string outputPath, CancellationToken ct)

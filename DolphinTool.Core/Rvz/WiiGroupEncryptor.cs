@@ -1,3 +1,4 @@
+using DolphinTool.Core.Models;
 using System.Security.Cryptography;
 
 namespace DolphinTool.Core.Rvz;
@@ -32,12 +33,14 @@ internal sealed class WiiGroupEncryptor : IDisposable
     private void ComputeHashes(byte[] decrypted)
     {
         byte[] hashes = _hashes;
+
         Array.Clear(hashes);
 
         for (int i = 0; i < WiiLayout.BlocksPerGroup; i++)
         {
             var block = decrypted.AsSpan(i * WiiLayout.BlockDataSize, WiiLayout.BlockDataSize);
             var header = hashes.AsSpan(i * WiiLayout.BlockHeaderSize, WiiLayout.BlockHeaderSize);
+
             for (int j = 0; j < WiiLayout.H0Count; j++)
                 SHA1.HashData(block.Slice(j * 0x400, 0x400), header.Slice(j * WiiLayout.HashSize, WiiLayout.HashSize));
         }
@@ -48,11 +51,7 @@ internal sealed class WiiGroupEncryptor : IDisposable
             var h1 = hashes.AsSpan(firstBlock * WiiLayout.BlockHeaderSize + WiiLayout.H1Offset, WiiLayout.H1Bytes);
 
             for (int k = 0; k < 8; k++)
-            {
-                SHA1.HashData(
-                    hashes.AsSpan((firstBlock + k) * WiiLayout.BlockHeaderSize, WiiLayout.H0Bytes),
-                    h1.Slice(k * WiiLayout.HashSize, WiiLayout.HashSize));
-            }
+                SHA1.HashData(hashes.AsSpan((firstBlock + k) * WiiLayout.BlockHeaderSize, WiiLayout.H0Bytes), h1.Slice(k * WiiLayout.HashSize, WiiLayout.HashSize));
 
             for (int k = 1; k < 8; k++)
                 h1.CopyTo(hashes.AsSpan((firstBlock + k) * WiiLayout.BlockHeaderSize + WiiLayout.H1Offset, WiiLayout.H1Bytes));
@@ -61,6 +60,7 @@ internal sealed class WiiGroupEncryptor : IDisposable
         }
 
         var h2 = hashes.AsSpan(WiiLayout.H2Offset, WiiLayout.H2Bytes);
+
         for (int i = 1; i < WiiLayout.BlocksPerGroup; i++)
             h2.CopyTo(hashes.AsSpan(i * WiiLayout.BlockHeaderSize + WiiLayout.H2Offset, WiiLayout.H2Bytes));
     }
@@ -86,22 +86,10 @@ internal sealed class WiiGroupEncryptor : IDisposable
         {
             var block = output.AsSpan(i * WiiLayout.BlockTotalSize, WiiLayout.BlockTotalSize);
 
-            _aes.EncryptCbc(
-                _hashes.AsSpan(i * WiiLayout.BlockHeaderSize, WiiLayout.BlockHeaderSize),
-                ZeroIv,
-                block[..WiiLayout.BlockHeaderSize],
-                PaddingMode.None);
-
-            _aes.EncryptCbc(
-                decrypted.AsSpan(i * WiiLayout.BlockDataSize, WiiLayout.BlockDataSize),
-                block.Slice(IvOffset, IvSize),
-                block[WiiLayout.BlockHeaderSize..],
-                PaddingMode.None);
+            _aes.EncryptCbc(_hashes.AsSpan(i * WiiLayout.BlockHeaderSize, WiiLayout.BlockHeaderSize), ZeroIv, block[..WiiLayout.BlockHeaderSize], PaddingMode.None);
+            _aes.EncryptCbc(decrypted.AsSpan(i * WiiLayout.BlockDataSize, WiiLayout.BlockDataSize), block.Slice(IvOffset, IvSize), block[WiiLayout.BlockHeaderSize..], PaddingMode.None);
         }
     }
 
-    public void Dispose()
-    {
-        _aes.Dispose();
-    }
+    public void Dispose() => _aes.Dispose();
 }

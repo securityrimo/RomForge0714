@@ -1,3 +1,4 @@
+using DolphinTool.Core.Models;
 using System.Buffers.Binary;
 
 namespace DolphinTool.Core.Rvz;
@@ -15,6 +16,7 @@ internal static class RvzPackDecoder
                 throw new InvalidDataException("RVZ 패킹 데이터가 잘못되었습니다.");
 
             uint header = BinaryPrimitives.ReadUInt32BigEndian(packed[inputPosition..]);
+
             inputPosition += sizeof(uint);
 
             bool junk = (header & 0x80000000u) != 0;
