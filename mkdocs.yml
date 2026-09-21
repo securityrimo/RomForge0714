@@ -9,15 +9,18 @@ theme:
   language: ko
   palette:
     - scheme: default
-      primary: indigo
+      primary: deep purple
       toggle:
         icon: material/brightness-7
         name: 다크 모드로 전환
     - scheme: slate
-      primary: indigo
+      primary: deep purple
       toggle:
         icon: material/brightness-4
         name: 라이트 모드로 전환
+  font:
+    text: Inter
+    code: JetBrains Mono
   features:
     - navigation.tabs
     - navigation.sections
@@ -53,6 +56,9 @@ nav:
   - 실행 및 키파일 설정: installation.md
   - 자주 묻는 질문: faq.md
 
+extra_css:
+  - stylesheets/extra.css
+
 markdown_extensions:
   - admonition
   - pymdownx.details
@@ -61,4 +67,3 @@ markdown_extensions:
       alternate_style: true
   - toc:
       permalink: true
-      slugify: !!python/name:pymdownx.slugs.uslugify
