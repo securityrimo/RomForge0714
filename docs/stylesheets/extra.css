@@ -1,28 +1,73 @@
-/* 전체적인 모서리를 부드럽게 (라운드 처리) */
+/* --- 1. 전체적인 컬러 및 폰트 감성 개선 --- */
 :root {
-  --md-border-radius: 8px;
+  --md-primary-fg-color: #7c3aed; /* 트렌디한 일렉트릭 퍼플 */
+  --md-accent-fg-color: #6d28d9;
+  --md-border-radius: 10px;
 }
 
-/* 본문 영역 최대 너비를 조금 더 넓혀서 시원하게 보기 */
+/* 본문 영역 최대 너비를 넓히고 여유 있게 조정 */
 .md-grid {
-  max-width: 1400px;
+  max-width: 1440px;
 }
 
-/* 코드 블록 스타일 세련되게 다듬기 */
-.md-typeset pre > code {
-  border-radius: 8px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+/* --- 2. 상단 네비게이션바(Header) 스타일링 --- */
+.md-header {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(8px);
 }
 
-/* Admonition (주의/경고/팁 박스) 모서리 둥글게 및 그림자 추가 */
+/* --- 3. 사이드바 및 메뉴 디자인 개선 --- */
+.md-sidebar {
+  top: 1rem;
+}
+
+/* 선택된 메뉴 강조 및 둥글게 처리 */
+.md-nav__item .md-nav__link--active {
+  background-color: rgba(124, 58, 237, 0.1);
+  font-weight: 700;
+  border-radius: 6px;
+}
+
+/* --- 4. 본문 Typography (글자 가독성 강화) --- */
+.md-typeset {
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+/* 제목에 포인트 디자인 추가 */
+.md-typeset h1 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  border-bottom: 2px solid var(--md-primary-fg-color);
+  padding-bottom: 0.3em;
+}
+
+.md-typeset h2 {
+  font-weight: 700;
+  margin-top: 2.5em;
+}
+
+/* --- 5. 박스(Admonition) 및 코드 블록 모던화 --- */
 .md-typeset .admonition, .md-typeset details {
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
-/* 테이블(표) 디자인 깔끔하게 다듬기 */
+.md-typeset pre > code {
+  border-radius: 10px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* --- 6. 테이블(표) 모던 디자인 --- */
 .md-typeset table:not([class]) {
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  border: none;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-primary-fg-color);
+  color: white;
 }
