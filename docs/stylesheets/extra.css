@@ -1,0 +1,28 @@
+/* 전체적인 모서리를 부드럽게 (라운드 처리) */
+:root {
+  --md-border-radius: 8px;
+}
+
+/* 본문 영역 최대 너비를 조금 더 넓혀서 시원하게 보기 */
+.md-grid {
+  max-width: 1400px;
+}
+
+/* 코드 블록 스타일 세련되게 다듬기 */
+.md-typeset pre > code {
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+/* Admonition (주의/경고/팁 박스) 모서리 둥글게 및 그림자 추가 */
+.md-typeset .admonition, .md-typeset details {
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* 테이블(표) 디자인 깔끔하게 다듬기 */
+.md-typeset table:not([class]) {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+}
