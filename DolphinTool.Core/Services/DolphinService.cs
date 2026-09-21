@@ -1,5 +1,6 @@
 ﻿using Common;
 using DolphinTool.Core.Models;
+using DolphinTool.Core.Rvz;
 using System.Runtime.InteropServices;
 
 namespace DolphinTool.Core.Services;
@@ -75,7 +76,7 @@ public class DolphinService
                         rvz_convert_to_rvz(inputPath, outputPath, "zstd", compressionLevel, 131072, progressCb, logCb),
 
                     "rvz" =>
-                        rvz_convert_to_iso(inputPath, outputPath, "iso", progressCb, logCb),
+                        ConvertRvzToIso(inputPath, outputPath, ct),
 
                     _ => -2
                 };
@@ -109,5 +110,23 @@ public class DolphinService
             
             LogMessage?.Invoke(this, ( $"{workType} 완료: {outputPath}", LogLevel.Ok ));
         }, ct);
+    }
+
+    private int ConvertRvzToIso(string inputPath, string outputPath, CancellationToken ct)
+    {
+        try
+        {
+            RvzToIsoConverter.Convert(inputPath, outputPath, p => ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(p * 100))), ct);
+            return 0;
+        }
+        catch (OperationCanceledException)
+        {
+            return -1;
+        }
+        catch (Exception ex)
+        {
+            LogMessage?.Invoke(this, (ex.Message, LogLevel.Error));
+            return -3;
+        }
     }
 }
