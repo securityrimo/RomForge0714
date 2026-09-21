@@ -31,7 +31,9 @@ internal static class RvzPackDecoder
                     throw new InvalidDataException("RVZ 패킹 시드 데이터가 잘못되었습니다.");
 
                 generator.SetSeed(packed.Slice(inputPosition, LaggedFibonacciGenerator.SeedBytes));
+
                 inputPosition += LaggedFibonacciGenerator.SeedBytes;
+
                 generator.Forward((dataOffset + outputPosition) % WiiLayout.LfgBlockSize);
                 generator.GetBytes(destination.Slice(outputPosition, size));
             }
@@ -41,6 +43,7 @@ internal static class RvzPackDecoder
                     throw new InvalidDataException("RVZ 패킹 데이터가 잘못되었습니다.");
 
                 packed.Slice(inputPosition, size).CopyTo(destination[outputPosition..]);
+
                 inputPosition += size;
             }
 

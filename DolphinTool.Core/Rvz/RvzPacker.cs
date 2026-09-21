@@ -149,6 +149,7 @@ internal sealed class RvzPacker
 
                 _outputLength += sizeof(uint) + nonJunk;
                 current += nonJunk;
+
                 PackedSize += (uint)(sizeof(uint) + nonJunk);
             }
 

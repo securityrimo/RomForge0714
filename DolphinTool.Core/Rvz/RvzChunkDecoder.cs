@@ -18,6 +18,7 @@ internal sealed class RvzChunkDecoder(RvzCompressionType compression) : IDisposa
     public DecodedChunk Decode(ReadOnlySpan<byte> input, bool compressedFlag, int exceptionLists, int dataSize, uint rvzPackedSize, long junkOffset)
     {
         bool compressed = compressedFlag && compression != RvzCompressionType.None;
+
         ReadOnlySpan<byte> stream;
 
         if (compressed)
@@ -66,6 +67,7 @@ internal sealed class RvzChunkDecoder(RvzCompressionType compression) : IDisposa
                 {
                     ushort offset = BinaryPrimitives.ReadUInt16BigEndian(stream[entryPosition..]);
                     byte[] hash = stream.Slice(entryPosition + sizeof(ushort), WiiLayout.HashSize).ToArray();
+
                     list.Add(new HashException(offset, hash));
                     entryPosition += HashExceptionSize;
                 }

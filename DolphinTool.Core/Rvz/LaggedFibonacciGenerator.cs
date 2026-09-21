@@ -33,6 +33,7 @@ internal sealed class LaggedFibonacciGenerator
         while (_positionBytes >= BufferBytes)
         {
             Step();
+
             _positionBytes -= BufferBytes;
         }
 
@@ -45,10 +46,13 @@ internal sealed class LaggedFibonacciGenerator
             Refresh();
 
         int written = 0;
+
         while (written < destination.Length)
         {
             int length = Math.Min(destination.Length - written, BufferBytes - _positionBytes);
+
             _bytes.AsSpan(_positionBytes, length).CopyTo(destination[written..]);
+
             _positionBytes += length;
             written += length;
 
@@ -64,6 +68,7 @@ internal sealed class LaggedFibonacciGenerator
     public int GetSeed(ReadOnlySpan<byte> data, int dataOffset, Span<byte> seedOut)
     {
         int bytesToSkip = ((dataOffset + 3) & ~3) - dataOffset;
+
         if (data.Length < bytesToSkip)
             return 0;
 
@@ -77,6 +82,7 @@ internal sealed class LaggedFibonacciGenerator
         _positionBytes = dataOffset % BufferBytes;
 
         int reconstructed = 0;
+
         while (reconstructed < data.Length && GetByte() == data[reconstructed])
             reconstructed++;
 
@@ -91,6 +97,7 @@ internal sealed class LaggedFibonacciGenerator
         for (int i = 0; i < K; i++)
         {
             uint value = BinaryPrimitives.ReadUInt32BigEndian(data[(i * sizeof(uint))..]);
+
             if ((value & 0x00C00000u) != ((value >> 2) & 0x00C00000u))
                 return false;
         }
@@ -127,6 +134,7 @@ internal sealed class LaggedFibonacciGenerator
         for (int i = 0; i < SeedSize; i++)
         {
             uint x = _words[i];
+
             _words[i] = (x & 0xFF00FFFFu) | ((x << 2) & 0x00FC0000u) | (((_words[i + 16] ^ _words[i + 15]) << 9) & 0x00030000u);
         }
 
@@ -145,6 +153,7 @@ internal sealed class LaggedFibonacciGenerator
             if (checkExistingData)
             {
                 uint actual = (_words[i] & 0xFF00FFFFu) | ((_words[i] << 2) & 0x00FC0000u);
+
                 if ((calculated & 0xFFFCFFFFu) != actual)
                     return false;
             }
@@ -155,6 +164,7 @@ internal sealed class LaggedFibonacciGenerator
         for (int i = 0; i < K; i++)
         {
             uint x = _words[i];
+
             _words[i] = (x & 0xFF00FFFFu) | ((x >> 2) & 0x00FF0000u);
         }
 
@@ -162,6 +172,7 @@ internal sealed class LaggedFibonacciGenerator
             Step();
 
         _dirty = true;
+
         return true;
     }
 
@@ -171,6 +182,7 @@ internal sealed class LaggedFibonacciGenerator
             Refresh();
 
         byte result = _bytes[_positionBytes];
+
         _positionBytes++;
 
         if (_positionBytes == BufferBytes)
@@ -195,6 +207,7 @@ internal sealed class LaggedFibonacciGenerator
     private void Backward(int startWord, int endWord)
     {
         int loopEnd = Math.Max(J, startWord);
+
         for (int i = Math.Min(endWord, K); i > loopEnd; i--)
             _words[i - 1] ^= _words[i - 1 - J];
 

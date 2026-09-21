@@ -10,9 +10,9 @@ public static class RvzToIsoConverter
         {
             using var reader = new RvzDiscReader(inputPath);
             using var output = File.OpenHandle(outputPath, FileMode.Create, FileAccess.Write, FileShare.None, FileOptions.None, reader.IsoSize);
-
-            reader.WriteIso(output, progress, ct);
-
+            
+            reader.WriteIso(new FileIsoSink(output), progress, ct);
+            
             succeeded = true;
         }
         finally

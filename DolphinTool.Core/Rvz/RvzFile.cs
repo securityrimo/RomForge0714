@@ -1,7 +1,7 @@
-using System.Buffers.Binary;
-using System.Security.Cryptography;
 using DolphinTool.Core.Models;
 using Microsoft.Win32.SafeHandles;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 
 namespace DolphinTool.Core.Rvz;
 
@@ -55,7 +55,6 @@ internal sealed class RvzFile
             throw new NotSupportedException($"지원하지 않는 RVZ 버전입니다: 0x{version:X8}");
 
         Span<byte> digest = stackalloc byte[20];
-
         SHA1.HashData(h1.AsSpan(0, Header1Size - 20), digest);
 
         if (!digest.SequenceEqual(h1.AsSpan(Header1Size - 20, 20)))
@@ -122,7 +121,6 @@ internal sealed class RvzFile
             throw new InvalidDataException("RVZ 파티션 테이블 위치가 올바르지 않습니다.");
 
         byte[] partitionRaw = new byte[partitionBytes];
-
         RvzIo.ReadExactly(handle, partitionRaw, partitionOffset);
         SHA1.HashData(partitionRaw, digest);
 
@@ -182,8 +180,7 @@ internal sealed class RvzFile
         };
     }
 
-    private static PartitionDataEntry ReadPartitionData(ReadOnlySpan<byte> span)
-        => new (BinaryPrimitives.ReadUInt32BigEndian(span), BinaryPrimitives.ReadUInt32BigEndian(span[4..]), BinaryPrimitives.ReadUInt32BigEndian(span[8..]), BinaryPrimitives.ReadUInt32BigEndian(span[12..]));
+    private static PartitionDataEntry ReadPartitionData(ReadOnlySpan<byte> span) => new(BinaryPrimitives.ReadUInt32BigEndian(span), BinaryPrimitives.ReadUInt32BigEndian(span[4..]), BinaryPrimitives.ReadUInt32BigEndian(span[8..]), BinaryPrimitives.ReadUInt32BigEndian(span[12..]));
 
     private static byte[] ReadTable(SafeFileHandle handle, long fileLength, long offset, long compressedSize, long decompressedSize, RvzCompressionType compression)
     {

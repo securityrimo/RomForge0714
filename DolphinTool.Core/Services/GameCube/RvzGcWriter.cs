@@ -1,10 +1,11 @@
 ﻿using DolphinTool.Core.Models;
+using DolphinTool.Core.Rvz;
 using Microsoft.Win32.SafeHandles;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using ZstdSharp.Unsafe;
 
-namespace DolphinTool.Core.Rvz;
+namespace DolphinTool.Core.Services.GameCube;
 
 internal sealed class RvzGcWriter
 {
@@ -24,12 +25,12 @@ internal sealed class RvzGcWriter
         public RvzPacker Packer { get; } = new();
     }
 
-    private readonly SafeFileHandle _input;
+    private readonly IRvzInputSource _input;
     private readonly SafeFileHandle _output;
     private readonly int _compressionLevel;
     private readonly int _chunkSize;
 
-    public RvzGcWriter(SafeFileHandle input, SafeFileHandle output, int compressionLevel, int chunkSize)
+    public RvzGcWriter(IRvzInputSource input, SafeFileHandle output, int compressionLevel, int chunkSize)
     {
         if (compressionLevel < ZstdSharp.Compressor.MinCompressionLevel || compressionLevel > ZstdSharp.Compressor.MaxCompressionLevel)
             throw new ArgumentOutOfRangeException(nameof(compressionLevel), "zstd 압축 레벨이 범위를 벗어났습니다.");
@@ -47,14 +48,14 @@ internal sealed class RvzGcWriter
 
     public void Write(Action<double>? progress, CancellationToken ct)
     {
-        long isoSize = RandomAccess.GetLength(_input);
+        long isoSize = _input.Length;
 
         if (isoSize <= DiscHeaderSize)
             throw new InvalidDataException("디스크 이미지가 너무 작습니다.");
 
         byte[] discHeader = new byte[DiscHeaderSize];
 
-        RvzIo.ReadExactly(_input, discHeader, 0);
+        _input.Read(0, discHeader);
         ValidateGameCube(discHeader);
 
         long groupCount = (isoSize + _chunkSize - 1) / _chunkSize;
@@ -181,7 +182,7 @@ internal sealed class RvzGcWriter
 
         var data = context.Input.AsSpan(0, length);
 
-        RvzIo.ReadExactly(_input, data, offset);
+        _input.Read(offset, data);
 
         int firstDifferent = data.IndexOfAnyExcept(data[0]);
         int reuseValue = firstDifferent < 0 ? data[0] : -1;
@@ -296,6 +297,7 @@ internal sealed class RvzGcWriter
         long offset = cursor;
 
         RandomAccess.Write(_output, data, cursor);
+
         cursor = Align4(cursor + data.Length);
 
         return offset;

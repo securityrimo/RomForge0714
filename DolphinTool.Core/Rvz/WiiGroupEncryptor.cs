@@ -33,7 +33,6 @@ internal sealed class WiiGroupEncryptor : IDisposable
     private void ComputeHashes(byte[] decrypted)
     {
         byte[] hashes = _hashes;
-
         Array.Clear(hashes);
 
         for (int i = 0; i < WiiLayout.BlocksPerGroup; i++)

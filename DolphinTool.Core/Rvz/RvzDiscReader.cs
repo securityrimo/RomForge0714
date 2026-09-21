@@ -35,21 +35,24 @@ internal sealed class RvzDiscReader : IDisposable
         catch
         {
             _handle.Dispose();
+
             throw;
         }
     }
 
     public long IsoSize => _file.IsoSize;
 
-    public void WriteIso(SafeFileHandle output, Action<double>? progress, CancellationToken ct)
+    public uint DiscType => _file.DiscType;
+
+    public void WriteIso(IIsoSink output, Action<double>? progress, CancellationToken ct)
     {
         long isoSize = _file.IsoSize;
 
-        RandomAccess.SetLength(output, isoSize);
+        output.SetLength(isoSize);
 
         int headerLength = (int)Math.Min(_file.DiscHeader.Length, isoSize);
 
-        RandomAccess.Write(output, _file.DiscHeader.AsSpan(0, headerLength), 0);
+        output.Write(0, _file.DiscHeader.AsSpan(0, headerLength));
 
         var reporter = new ProgressReporter(isoSize, progress);
 
@@ -116,7 +119,6 @@ internal sealed class RvzDiscReader : IDisposable
         }
 
         regions.Sort((a, b) => a.Start.CompareTo(b.Start));
-
         return regions;
     }
 
@@ -168,13 +170,12 @@ internal sealed class RvzDiscReader : IDisposable
         while (position < entryEnd)
         {
             long next = Math.Min(entryEnd, (position / unitSectors + 1) * unitSectors);
-
             items.Add(new WorkItem(WorkKind.Partition, partitionIndex, dataIndex, position, next - position, false));
             position = next;
         }
     }
 
-    private void RunPipeline(List<WorkItem> items, SafeFileHandle output, ProgressReporter reporter, CancellationToken ct)
+    private void RunPipeline(List<WorkItem> items, IIsoSink output, ProgressReporter reporter, CancellationToken ct)
     {
         int window = Math.Clamp(Environment.ProcessorCount, 2, 8);
         var contexts = new List<RvzWorkerContext>();
@@ -186,7 +187,7 @@ internal sealed class RvzDiscReader : IDisposable
             var result = entry.Task.GetAwaiter().GetResult();
 
             if (result.Buffer != null)
-                RandomAccess.Write(output, result.Buffer.AsSpan(0, result.Length), result.FileOffset);
+                output.Write(result.FileOffset, result.Buffer.AsSpan(0, result.Length));
 
             reporter.Add(result.Length);
             idle.Push(entry.Context);
@@ -333,6 +334,7 @@ internal sealed class RvzDiscReader : IDisposable
             throw new InvalidDataException("RVZ 데이터 영역 사이에 빈 구간이 있습니다.");
 
         long skipped = dataOffset % sectorSize;
+
         dataOffset -= skipped;
         dataSize += skipped;
 
