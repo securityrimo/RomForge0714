@@ -31,7 +31,7 @@ public class DolphinService
     public event EventHandler<(string Message, LogLevel Level)>? LogMessage;
     public event EventHandler<ProgressEventArgs>? ProgressChanged;
 
-    public Task ConvertFileAsync(string inputPath, string format, string outputExtension, int compressionLevel = 18, string? outputDir = null, CancellationToken CancellationToken = default)
+    public Task ConvertFileAsync(string inputPath, string format, string outputExtension, int compressionLevel = 18, string? outputDir = null, CancellationToken ct = default)
     {
         format = format.ToLowerInvariant();
 
@@ -57,15 +57,15 @@ public class DolphinService
 
             outputPath = Utils.GetUniqueFilePath(outputPath);
 
-            ProgressCallbackDelegate progressCb = (text, pCancellationToken) =>
+            ProgressCallbackDelegate progressCb = (text, pct) =>
             {
-                ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(pCancellationToken * 100)));
-                return !CancellationToken.IsCancellationRequested;
+                ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(pct * 100)));
+                return !ct.IsCancellationRequested;
             };
 
             LogCallbackDelegate logCb = msg => LogMessage?.Invoke(this, (msg, LogLevel.Info));
 
-            using var reg = CancellationToken.Register(() => rvz_cancel());
+            using var reg = ct.Register(() => rvz_cancel());
 
             LogMessage?.Invoke(this, ( $"{Path.GetFileName(inputPath)} {workType} 시작", LogLevel.Highlight ));
 
@@ -75,17 +75,17 @@ public class DolphinService
             {
                 result = format switch
                 {
-                    "wii" or "wbfs" or "wia" =>
+                    "wbfs" or "wia" =>
                         rvz_convert_to_rvz(inputPath, outputPath, "zstd", compressionLevel, 131072, progressCb, logCb),
 
-                    "gcm" =>
-                        ConvertGCancellationTokenoRvz(inputPath, outputPath, compressionLevel, CancellationToken),
+                    "gcm" or "wii" =>
+                        ConvertIsoToRvz(inputPath, outputPath, compressionLevel, ct),
 
-                    "gcz" when DiscImageInspector.Detect(inputPath) == DiscPlatform.GameCube =>                    
-                        ConvertGCancellationTokenoRvz(inputPath, outputPath, compressionLevel, CancellationToken),                   
+                    "gcz" when DiscImageInspector.Detect(inputPath) == DiscPlatform.GameCube =>
+                        ConvertIsoToRvz(inputPath, outputPath, compressionLevel, ct),                   
 
                     "rvz" =>
-                        ConvertRvzToIso(inputPath, outputPath, CancellationToken),
+                        ConvertRvzToIso(inputPath, outputPath, ct),
 
                     _ => -2
                 };
@@ -96,10 +96,10 @@ public class DolphinService
                 GC.KeepAlive(logCb);
             }
 
-            if (result == -1 || CancellationToken.IsCancellationRequested)
+            if (result == -1 || ct.IsCancellationRequested)
             {
                 LogMessage?.Invoke(this, ( $"{workType} 취소됨: {Path.GetFileName(inputPath)}", LogLevel.Error ));
-                throw new OperationCanceledException(CancellationToken);
+                throw new OperationCanceledException(ct);
             }
 
             if (result != 0)
@@ -121,10 +121,10 @@ public class DolphinService
             }
             
             LogMessage?.Invoke(this, ( $"{workType} 완료: {outputPath}", LogLevel.Ok ));
-        }, CancellationToken);
+        }, ct);
     }
 
-    private int ConvertToGcz(string inputPath, string outputPath, CancellationToken CancellationToken)
+    private int ConvertToGcz(string inputPath, string outputPath, CancellationToken ct)
     {
         try
         {
@@ -133,7 +133,7 @@ public class DolphinService
                 : IsoToGczConverter.Convert;
 
             convert(inputPath, outputPath, GczWriter.DefaultBlockSize,
-                p => ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(p * 100))), CancellationToken);
+                p => ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(p * 100))), ct);
             return 0;
         }
         catch (OperationCanceledException)
@@ -147,11 +147,11 @@ public class DolphinService
         }
     }
 
-    private int ConvertGCancellationTokenoRvz(string inputPath, string outputPath, int compressionLevel, CancellationToken CancellationToken)
+    private int ConvertRvzToIso(string inputPath, string outputPath, CancellationToken ct)
     {
         try
         {
-            IsoToRvzConverter.Convert(inputPath, outputPath, compressionLevel, 131072, p => ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(p * 100))), CancellationToken);
+            RvzToIsoConverter.Convert(inputPath, outputPath, p => ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(p * 100))), ct);
             return 0;
         }
         catch (OperationCanceledException)
@@ -165,11 +165,11 @@ public class DolphinService
         }
     }
 
-    private int ConvertRvzToIso(string inputPath, string outputPath, CancellationToken CancellationToken)
+    private int ConvertIsoToRvz(string inputPath, string outputPath, int compressionLevel, CancellationToken ct)
     {
         try
         {
-            RvzToIsoConverter.Convert(inputPath, outputPath, p => ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(p * 100))), CancellationToken);
+            IsoToRvzConverter.Convert(inputPath, outputPath, compressionLevel, 131072, p => ProgressChanged?.Invoke(this, new ProgressEventArgs((int)(p * 100))), ct);
             return 0;
         }
         catch (OperationCanceledException)
