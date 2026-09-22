@@ -39,8 +39,8 @@ public class DolphinService
         {
             string workType = format switch
             {
-                "wii" or "gcm" or "wbfs" or "wia" => "압축",
-                "gcz" => "재압축",
+                "wii" or "gcm" => "압축",
+                "gcz" or "wbfs" or "wia" => "재압축",
                 "rvz" => "해제",
                 _ => "미지원"
             };
@@ -54,6 +54,7 @@ public class DolphinService
             var dir = outputDir ?? Path.GetDirectoryName(inputPath)!;
             var name = Path.GetFileNameWithoutExtension(inputPath);
             string outputPath = Path.Combine(dir, $"{name}.{outputExtension}");
+
             outputPath = Utils.GetUniqueFilePath(outputPath);
 
             ProgressCallbackDelegate progressCb = (text, pCancellationToken) =>
@@ -69,6 +70,7 @@ public class DolphinService
             LogMessage?.Invoke(this, ( $"{Path.GetFileName(inputPath)} {workType} 시작", LogLevel.Highlight ));
 
             int result;
+
             try
             {
                 result = format switch
@@ -90,8 +92,8 @@ public class DolphinService
             }
             finally
             {
-                System.GC.KeepAlive(progressCb);
-                System.GC.KeepAlive(logCb);
+                GC.KeepAlive(progressCb);
+                GC.KeepAlive(logCb);
             }
 
             if (result == -1 || CancellationToken.IsCancellationRequested)
@@ -104,7 +106,9 @@ public class DolphinService
             {
                 if (File.Exists(outputPath))
                     try { File.Delete(outputPath); } catch { }
+
                 LogMessage?.Invoke(this, ($"{workType} 실패 (에러 코드: {result})", LogLevel.Error));
+
                 throw new InvalidOperationException($"{workType} 실패 (에러 코드: {result})");
             }
 
@@ -112,6 +116,7 @@ public class DolphinService
             {
                 long originalSize = new FileInfo(inputPath).Length;
                 long compressedSize = new FileInfo(outputPath).Length;
+
                 LogMessage?.Invoke(this, ( $"압축률: {Utils.FormatFileSize(originalSize)} → {Utils.FormatFileSize(compressedSize)} ({compressedSize * 100.0 / originalSize:F1}%)", LogLevel.Highlight ));
             }
             
